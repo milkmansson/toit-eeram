@@ -13,14 +13,29 @@ data is automatically transferred to the EEPROM upon loss of power. Data can
 also be transferred manually by using either the 'Hardware Store' pin or
 software control. Upon power-up, the EEPROM data is automatically recalled to
 the SRAM. Recall can also be initiated through software control.
-([datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/47L04_47C04_47L16_47C16_DS20005371D.pdf))
+[[datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/47L04_47C04_47L16_47C16_DS20005371D.pdf)]
 
 > [!TIP]
 > This device is made to store persistent data that could be written at
 > rates high enough to cause damage to typical flash memory.  If the intended
 > use case is for data that is saved once and not saved again, then Toit's
 > [bucket feature](https://libs.toit.io/system/storage/class-Bucket) is probably
-> more than enough, with fewer electrical requirements.
+> more than enough.  It is far simpler and has fewer electrical requirements.
+
+### Device Types
+These IC's come in two voltage flavours and two size flavours.  Note that the
+`L` and `C` indicate the supply voltage:
+| Part # | Size (Density) | Voltage Range |
+| - | - | - |
+| `47L04` | 4Kbit | 2.7-3.6V |
+| `47C04` | 4Kbit | 4.5-5.5V |
+| `47L16` | 16Kbit | 2.7-3.6V |
+| `47C16` | 16Kbit | 4.5-5.5V |
+
+### Device Wiring
+The IC requries a power capacitor.  A decoupling capacitor is also recommended.
+There are no built-in pull up resistors either.  Wiring diagrams are given in
+the datasheet.
 
 ## Quick Start Information
 Use the following steps to get operational quickly:
@@ -30,7 +45,7 @@ Use the following steps to get operational quickly:
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
-[raise an issue](https://github.com/milkmansson/toit-ina226/issues). Feedback is
+[raise an issue](./issues). Feedback is
 welcome and appreciated!
 
 ## Disclaimer
