@@ -2,7 +2,7 @@
 Toit Driver Library for a Microchip EERAM module - a flash backed ram module,
 which copies data from SRAM to FLASH when it senses power off.
 
-![Several 47L16 PDIP ICs](images/47l16s.jpg)
+![Several 47L16 PDIP ICs](images/47l16s.jpeg)
 
 ## About the Device
 The Microchip Technology 47L04/47C04/47L16/47C16 (47XXX) is a 4/16 Kbit SRAM
