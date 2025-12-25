@@ -59,8 +59,8 @@ The current setting can be determined using `driver.ase-enabled`.
 ### Library Classes
 The library comes in the form of two classes:
 * `Eeram` class:  The code implementing the Eeram features.
-* `PersistentMap` class:  Implements an Eeram-backed Map object (depends on the
-  Eeram class.)
+* `PersistentMap` class:  Implements an Eeram-backed Map object (utilises the
+  above `Eeram` class.)
 
 ### Specific Functions
 
