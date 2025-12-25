@@ -313,8 +313,8 @@ class PersistentMap:
       --capacity=capacity
       --hs-pin=hs-pin
       --logger=logger
-    logger_ = logger.with-name "PersistentMap"
-    driver_.enable-ase
+    logger_ = logger.with-name "persistentmap"
+    if not driver_.ase-enabled: driver_.enable-ase
     capacity_ = capacity
     map-from-sram_
     logger_.error "driver started (manual creation)"
@@ -322,8 +322,8 @@ class PersistentMap:
   /** Constructor for use with an existing Eemap instance. */
   constructor driver/Eeram --logger/log.Logger=log.default:
     driver_ = driver
-    logger_ = logger.with-name "PersistentMap"
-    driver_.enable-ase
+    logger_ = logger.with-name "persistentmap"
+    if not driver_.ase-enabled: driver_.enable-ase
     capacity_ = driver.capacity
     map-from-sram_
     logger_.error "driver started (using existing Eeram objcet)"
