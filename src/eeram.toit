@@ -46,7 +46,8 @@ class Eeram:
 
   static PULSE-PIN-TIME_ := Duration --ms=50
   static INTER-I2C-SLEEP-TIME_ := Duration --ms=30
-  static STORE-RECALL-TIMEOUT_ := Duration --ms=1000
+  static STORE-WAIT_ := Duration --ms=30
+  static RECALL-WAIT_ := Duration --ms=10
 
   static REG-STATUS_  ::= 0x00
   static REG-COMMAND_ ::= 0x55
@@ -71,7 +72,6 @@ class Eeram:
   sram-data_/i2c.Device := ?
   sram-control_/i2c.Device := ?
   logger_/log.Logger := ?
-  hardware-store_/gpio.Pin? := null
   capacity_/int := ?
 
   /** Class Constructor */
@@ -79,7 +79,6 @@ class Eeram:
       --data/i2c.Device
       --control/i2c.Device
       --capacity/int=CAPACITY-16KBIT
-      --hs-pin/gpio.Pin?=null
       --logger/log.Logger=log.default:
     assert: capacity == CAPACITY-4KBIT or capacity == CAPACITY-16KBIT
 
@@ -136,7 +135,7 @@ class Eeram:
     return raw == 1
 
   enable-block-protection --portion/int=BP-ALL-WRITE-PROTECTED -> none:
-    assert: 0 <= portion <= 8
+    assert: 0 <= portion <= 7
     write-register_ REG-STATUS_ portion --mask=STATUS-BP-MASK_
 
   disable-block-protection -> none:
@@ -154,29 +153,25 @@ class Eeram:
     return raw == 1
 
   /** Forces immediate write from SRAM into EEPROM. */
+  // A fixed sleep of 30 ms to guard against issues due to the device not
+  // supporting normal methods of delayed ACKs. See the Datasheet on
+  // "Acknowledge Polling".
   store -> none:
-    duration := Duration.ZERO
-    if has-changed:
-      exception := catch:
-        with-timeout STORE-RECALL-TIMEOUT_:
-          duration = Duration.of:
-            write-register_ REG-COMMAND_ COMMAND-STORE_
-            while has-changed:
-              sleep --ms=50
-      logger_.debug "store SRAM in EEPROM" --tags={"duration":"$(duration.in-ms)"}
-    else:
+    if not has-changed:
       logger_.debug "store not necessary - not changed"
+      return
+    write-register_ REG-COMMAND_ COMMAND-STORE_
+    sleep STORE-WAIT_
+    logger_.debug "read SRAM into EEPROM"
 
   /** Forces immediate read from EEPROM into SRAM. */
+  // A fixed sleep of 10 ms to guard against issues due to the device not
+  // supporting normal methods of delayed ACKs. See the Datasheet on
+  // "Acknowledge Polling".
   recall -> none:
-    duration := Duration.ZERO
-    exception := catch:
-      with-timeout STORE-RECALL-TIMEOUT_:
-        duration = Duration.of:
-          write-register_ REG-COMMAND_ COMMAND-RECALL_
-          while has-changed:
-            sleep --ms=50
-    logger_.debug "reading back EEPROM into SRAM" --tags={"duration":"$(duration.in-ms)"}
+    write-register_ REG-COMMAND_ COMMAND-RECALL_
+    sleep RECALL-WAIT_
+    logger_.debug "read EEPROM into SRAM"
 
   write-data address/int bytes/ByteArray -> none:
     assert: 0 <= address <= (capacity_ - bytes.size)
@@ -304,14 +299,12 @@ class PersistentMap:
       --data/i2c.Device
       --control/i2c.Device
       --capacity/int=Eeram.CAPACITY-16KBIT
-      --hs-pin/gpio.Pin?=null
       --logger/log.Logger=log.default:
     assert: capacity == Eeram.CAPACITY-4KBIT or capacity == Eeram.CAPACITY-16KBIT
     driver_ = Eeram
       --control=control
       --data=data
       --capacity=capacity
-      --hs-pin=hs-pin
       --logger=logger
     logger_ = logger.with-name "persistentmap"
     if not driver_.ase-enabled: driver_.enable-ase

@@ -116,7 +116,7 @@ welcome and appreciated!
 
 ## Disclaimer
 - This driver has been written and tested with an IC directly (pictured).
-  Other modules do exist and may behave differenly.
+  Other modules do exist and may behave differently.
 - All trademarks belong to their respective owners.
 - No warranties for this work, express or implied.
 
