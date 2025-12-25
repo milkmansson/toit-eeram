@@ -2,12 +2,9 @@
 // Use of this source code is governed by a Zero-Clause BSD license that can
 // be found in the EXAMPLES_LICENSE file.
 
-import serial.device as serial
-import serial.registers as registers
 import encoding.tison
 import gpio
 import log
-import io show LITTLE-ENDIAN
 import io show BIG-ENDIAN
 import i2c
 
@@ -44,7 +41,6 @@ class Eeram:
   static CAPACITY-4KBIT := 0x0200   // 0x01FF
   static CAPACITY-16KBIT := 0x0800  // 0x07FF
 
-  static PULSE-PIN-TIME_ := Duration --ms=50
   static INTER-I2C-SLEEP-TIME_ := Duration --ms=30
   static STORE-WAIT_ := Duration --ms=30
   static RECALL-WAIT_ := Duration --ms=10
@@ -310,7 +306,7 @@ class PersistentMap:
     if not driver_.ase-enabled: driver_.enable-ase
     capacity_ = capacity
     map-from-sram_
-    logger_.error "driver started (manual creation)"
+    logger_.info "driver started (manual creation)"
 
   /** Constructor for use with an existing Eemap instance. */
   constructor driver/Eeram --logger/log.Logger=log.default:
@@ -319,7 +315,7 @@ class PersistentMap:
     if not driver_.ase-enabled: driver_.enable-ase
     capacity_ = driver.capacity
     map-from-sram_
-    logger_.error "driver started (using existing Eeram objcet)"
+    logger_.info "driver started (using existing Eeram objcet)"
 
   /**
   Stores the $value for the given $key.
@@ -328,11 +324,11 @@ class PersistentMap:
     sent to the SRAM immediately.
   */
   operator []= key/any value/any -> none:
-    logger_.debug "adding to data map" --tags={"key":key,"data":value}
-    data_[key] = value
     if bytes-used >= bytes-capacity:
       logger_.error "SRAM storage exceeded."
       return
+    logger_.debug "adding to data map" --tags={"key":key,"data":value}
+    data_[key] = value
     map-to-sram_
 
   /**
@@ -369,7 +365,7 @@ class PersistentMap:
   /** Return the current capacity only (in KB). */
   /* 2 bytes used to store the data size for later reads */
   bytes-capacity -> int:
-    return capacity_ - 2
+    return capacity_
 
   /** Returns the number of bytes used */
   bytes-used object/any=data_ -> int:
@@ -411,7 +407,7 @@ class PersistentMap:
   map-from-sram_ -> none:
     data-size-ba := driver_.read-data DATA-SIZE-ADDRESS_ 2
     data-size := BIG-ENDIAN.uint16 data-size-ba 00
-    if data-size-ba == #[0xff, 0xff]:
+    if (data-size-ba == #[0xff, 0xff]) or (data-size-ba == #[0x00, 0x00]):
       // probably never been used before, or overwritten/corrupt.
       logger_.error "cannot read back - likely brand new chip" --tags={"size-ba":"$(data-size-ba)"}
       return
@@ -431,7 +427,7 @@ class PersistentMap:
 
     if rows == null:
       size-data-raw := driver_.read-data DATA-SIZE-ADDRESS_ 2
-      if size-data-raw == #[0xff, 0xff]:
+      if (size-data-raw == #[0xff, 0xff]) or (size-data-raw == #[0x00, 0x00]):
         // probably never been used before, or overwritten/corrupt.
         logger_.warn "likely brand new chip, or corrupt" --tags={"size-ba":"$(size-data-raw)"}
         rows = (capacity_ + cols - 1) / cols
