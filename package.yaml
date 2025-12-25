@@ -1,0 +1,4 @@
+name: eeram
+description: Support for Microchip 47L04/47C04/47L16/47C16 I2C based, Flash EEPROM backed, SRAM.
+environment:
+  sdk: ^2.0.0-alpha.189
