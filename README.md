@@ -63,8 +63,51 @@ The library comes in the form of two classes:
   above `Eeram` class.)
 
 ### Specific Functions
+| class | functions | description |
+| - | - | - |
+| `Eeram` | ...todo... | ...todo... |
+| `PersistentMap` | ...todo... | ...todo... |
 
+## Example
+Please see the [examples](.\examples) folder.  In principle, the device has two
+I2C devices, the controller, and the memory device.  The controller receives
+instructions such as `store` and `recall` (pushing data between SRAM and EEPROM)
+and enabling ASE.  The usage pattern is thus:
+```toit
+SDA-PIN := 8
+SCL-PIN := 9
 
+// Initial setup for I2C.
+frequency := 400_000
+sda := gpio.Pin SDA-PIN
+scl := gpio.Pin SCL-PIN
+bus := i2c.Bus --sda=sda --scl=scl --frequency=frequency
+scandevices := bus.scan
+
+// Establish control and data devices.
+if not scandevices.contains Eeram.I2C-CONTROL-ADDRESS:
+  print "Eeram CONTROLLER not present"
+  return
+if not scandevices.contains Eeram.I2C-DATA-ADDRESS:
+  print "Eeram SRAM not present"
+  return
+
+eeram-controller-device = bus.device Eeram.I2C-CONTROL-ADDRESS
+eeram-data-device = bus.device Eeram.I2C-DATA-ADDRESS
+
+// To use the device as a 'PersistentMap':
+pmap := PersistentMap
+      --control=eeram-controller-device
+      --data=eeram-data-device
+      --capacity=Eeram.CAPACITY-16KBIT
+
+// To use the device as a memory device:
+eeram := Eeram
+      --control=eeram-controller-device
+      --data=eeram-data-device
+      --capacity=Eeram.CAPACITY-16KBIT
+
+```
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
