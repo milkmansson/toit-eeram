@@ -91,8 +91,7 @@ class Eeram:
     capacity_ = capacity
 
     // Log status of chip at startup.
-    if ase-enabled: logger_.info "ase enabled"
-    else: logger_.warn "ase disabled"
+    if not ase-enabled: logger_.warn "ase disabled"
 
   /**
   The IC's capacity (as given in constructor).
@@ -317,6 +316,7 @@ class PersistentMap:
     driver_.enable-ase
     capacity_ = capacity
     map-from-sram_
+    logger_.error "driver started (manual creation)"
 
   /** Constructor for use with an existing Eemap instance. */
   constructor driver/Eeram --logger/log.Logger=log.default:
@@ -325,6 +325,7 @@ class PersistentMap:
     driver_.enable-ase
     capacity_ = driver.capacity
     map-from-sram_
+    logger_.error "driver started (using existing Eeram objcet)"
 
   /**
   Stores the $value for the given $key.
