@@ -45,10 +45,10 @@ the datasheet.
 
 ### Auto Store Enable (ASE)
 > [!WARNING]
-> When the device is first turned on, 'Auto StoreEnable' (ASE) feature is
-> disabled.  Until this is enabled the automatic save feature will not happen.
-> Changing this feature is set immediately on the device in flash and does not
-> need to be set again on the next power on reset.
+> When the device is first turned used out of the box, 'Auto StoreEnable' (ASE)
+> feature is disabled.  Until this is enabled the automatic save feature will
+> not happen.  Changing this feature is set immediately on the device in flash
+> and does not need to be set again on the next power on reset.
 
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`
