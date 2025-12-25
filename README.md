@@ -20,7 +20,7 @@ the SRAM. Recall can also be initiated through software control.
 > rates high enough to cause damage to typical flash memory.  If the intended
 > use case is for data that is saved once and not saved again, then Toit's
 > [bucket feature](https://libs.toit.io/system/storage/class-Bucket) is probably
-> more than enough.  It is far simpler and has fewer electrical requirements.
+> more than enough.  It is far simpler and requires fewer components.
 
 ### Device Types
 These IC's come in two voltage flavours and two size flavours.  Note that the
@@ -54,7 +54,7 @@ and values that are best to use.
 > and does not need to be set again on the next power on reset.
 
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
-The current setting can be determined using `driver.ase-enabled`
+The current setting can be determined using `driver.ase-enabled`.
 
 ### Library Classes
 The library comes in the form of two classes:

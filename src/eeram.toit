@@ -349,7 +349,12 @@ class PersistentMap:
       return data_[key]
     else:
       logger_.error "missing key from data map" --tags={"key":key}
-      return null
+      throw "missing key from data map"
+
+  get key/any [--if-absent] -> any:
+    if not data_.contains key:
+      return if-absent.call
+    return data_[key]
 
   do [block] -> none:
     data_.do:
