@@ -36,7 +36,7 @@ There are different capacities and model numbers available from different
 manufacturers.
 
 
-## Features and Operation
+## Features
 
 ### Device Wiring
 The IC requries a power capacitor.  A decoupling capacitor is also recommended.
@@ -52,6 +52,16 @@ the datasheet.
 
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`
+
+## Operation
+The library comes in the form of two function libraries:
+* `Eeram` class:  The code implementing the Eeram.
+* `PersistentMap` class:  Implements an Eeram-backed Map object, using the Eeram
+  class.
+
+### Specific Functions
+
+
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
