@@ -83,7 +83,7 @@ class Eeram:
       --logger/log.Logger=log.default:
     assert: capacity == CAPACITY-4KBIT or capacity == CAPACITY-16KBIT
 
-    logger_ = logger.with-name "Eeram"
+    logger_ = logger.with-name "eeram"
     sram-data_ = data
     sram-control_ = control
 
@@ -306,6 +306,7 @@ class PersistentMap:
       --capacity/int=Eeram.CAPACITY-16KBIT
       --hs-pin/gpio.Pin?=null
       --logger/log.Logger=log.default:
+    assert: capacity == Eeram.CAPACITY-4KBIT or capacity == Eeram.CAPACITY-16KBIT
     driver_ = Eeram
       --control=control
       --data=data
