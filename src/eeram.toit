@@ -26,7 +26,7 @@ be initiated through software control.
 */
 
 class Eeram:
-  static I2C-SRAM-ADDRESS    := 0x50
+  static I2C-DATA-ADDRESS    := 0x50
   static I2C-CONTROL-ADDRESS := 0x18
 
   // I2C Addresses for SRAM Data Registers (opcode 1010).
@@ -45,6 +45,8 @@ class Eeram:
   static CAPACITY-16KBIT := 0x0800  // 0x07FF
 
   static PULSE-PIN-TIME_ := Duration --ms=50
+  static INTER-I2C-SLEEP-TIME_ := Duration --ms=30
+  static STORE-RECALL-TIMEOUT_ := Duration --ms=1000
 
   static REG-STATUS_  ::= 0x00
   static REG-COMMAND_ ::= 0x55
@@ -54,30 +56,28 @@ class Eeram:
   static STATUS-ASE_     ::= 0b00000010  // Whether Auto Store is Enabled.
   static STATUS-EVENT_   ::= 0b00000001  // Whether an external event has been detected on the HS pin.
 
-  static BP-ALL-UNPROTECTED     ::= 0b000
-  static BP-ALL-WRITE-PROTECTED ::= 0b111
+  static BP-NONE-WRITE-PROTECTED ::= 0b000 // Entire array is not write-protected
+  static BP-UPPER-1-64-PROTECTED ::= 0b001 // Upper 1/64 of array is write-protected
+  static BP-UPPER-1-32-PROTECTED ::= 0b010 // Upper 1/32 of array is write-protected
+  static BP-UPPER-1-16-PROTECTED ::= 0b011 // Upper 1/16 of array is write-protected
+  static BP-UPPER-1-8-PROTECTED  ::= 0b100 // Upper 1/8 of array is write-protected
+  static BP-UPPER-1-4-PROTECTED  ::= 0b101 // Upper 1/4 of array is write-protected
+  static BP-UPPER-1-2-PROTECTED  ::= 0b110 // Upper 1/2 of array is write-protected
+  static BP-ALL-WRITE-PROTECTED  ::= 0b111 // Entire array is write-protected
 
   static COMMAND-STORE_  ::= 0b00110011  // Executes a Software Store command.
   static COMMAND-RECALL_ ::= 0b11011101  // Executes a Software Recall command.
 
-  static DEFAULT-REGISTER-WIDTH_ ::= 8
-
-  static DATA-SIZE-ADDRESS_ ::= #[0, 0]
-  static DATA-START-ADDRESS_ ::= #[0, 2]
-
-
   sram-data_/i2c.Device := ?
-  sram-control_/registers.Registers := ?
+  sram-control_/i2c.Device := ?
   logger_/log.Logger := ?
-  capacity_/int := ?
   hardware-store_/gpio.Pin? := null
-
-  data_/Map := {:}
+  capacity_/int := ?
 
   /** Class Constructor */
   constructor
       --data/i2c.Device
-      --control/serial.Device
+      --control/i2c.Device
       --capacity/int=CAPACITY-16KBIT
       --hs-pin/gpio.Pin?=null
       --logger/log.Logger=log.default:
@@ -85,71 +85,28 @@ class Eeram:
 
     logger_ = logger.with-name "Eeram"
     sram-data_ = data
-    sram-control_ = control.registers
+    sram-control_ = control
 
     // Two bytes are used to store the size of the data being written.
     capacity_ = capacity
-
-    // Ensure 'hardware-store' pin is set to off.
-    if hs-pin is gpio.Pin:
-      hardware-store_ = hs-pin
-      hardware-store_.set 0
 
     // Log status of chip at startup.
     if ase-enabled: logger_.info "ase enabled"
     else: logger_.warn "ase disabled"
 
-    // pull data from sram.
-    from-eeram_
-
   /**
-  Stores value in the location for the given key.
+  The IC's capacity (as given in constructor).
 
-  If the key is already present, overrides the previous value.  Data will be
-    sent to the Eeram device immediately.
+  If the device is written to at an address higher than exists on the device, the
+    device will automatically loop and continue to write without warning,
+    overwriting the data at the beginning of the device.  This value is used as
+    a guard to prevent writing past the devices end capacity.
+
+  This value is not checked  - there is no reliable way in software to tell
+    which chip model is attached.
   */
-  operator []= key/any value/any -> none:
-    logger_.debug "adding to data map" --tags={"key":key,"data":value}
-    data_[key] = value
-    if bytes-used >= bytes-capacity:
-      logger_.error "eeeram storage exceeded."
-      return
-    to-eeram_
-
-  /**
-  Retrieves a value map for the given key.
-  */
-  operator [] key/any -> any?:
-    if data_.contains key:
-      logger_.debug "retrieving from data map" --tags={"key":key}
-      return data_[key]
-    else:
-      logger_.error "missing key from data map" --tags={"key":key}
-      return null
-
-  /** Return the current capacity only (in KB). */
-  /* 2 bytes used to store the data size for later reads */
-  bytes-capacity -> int:
-    return capacity_ - 2
-
-  /** Returns the number of bytes used */
-  bytes-used object/any=data_ -> int:
-    return (tison.encode object).size
-
-  /** Returns the number of bytes available */
-  /* 2 bytes used to store the data size for later reads */
-  bytes-available -> int:
-    return bytes-capacity - bytes-used - 2
-
-  /** Force a store from RAM to FLASH using hardware request. */
-  hardware-store -> none:
-    if hardware-store_ is gpio.Pin:
-      logger_.info "hardware-store requested" --tags={"pin-pulse-time-ms": PULSE-PIN-TIME_.in-ms}
-      hardware-store_.set 1
-      sleep PULSE-PIN-TIME_
-      hardware-store_.set 0
-    else:
-      logger_.error "hardware-store requested, but no gpio pin set"
+  capacity -> int:
+    return capacity_
 
   /**
   Enables the Auto-Store mechanism.
@@ -179,33 +136,18 @@ class Eeram:
     raw/int := read-register_ REG-STATUS_ --mask=STATUS-ASE_
     return raw == 1
 
-  /** Stores the current map in the SRAM device. */
-  to-eeram_ -> none:
-    data-bytes := tison.encode data_
-    data-size-ba := ByteArray 2
-    BIG-ENDIAN.put-uint16 data-size-ba 00 data-bytes.size
-    logger_.debug "saving data map to eeram" --tags={"size":"$(data-bytes.size)"}
-    sram-data_.write-address DATA-SIZE-ADDRESS_ data-size-ba
-    sram-data_.write-address DATA-START-ADDRESS_ data-bytes
+  enable-block-protection --portion/int=BP-ALL-WRITE-PROTECTED -> none:
+    assert: 0 <= portion <= 8
+    write-register_ REG-STATUS_ portion --mask=STATUS-BP-MASK_
 
+  disable-block-protection -> none:
+    enable-block-protection --portion=BP-NONE-WRITE-PROTECTED
 
-  /** Stores the current map in the SRAM device. */
-  from-eeram_ -> none:
-    data-size-ba := sram-data_.read-address DATA-SIZE-ADDRESS_ 2
-    data-size := BIG-ENDIAN.uint16 data-size-ba 00
-    if data-size-ba == #[0xff, 0xff]:
-      // probably never been used before, or overwritten/corrupt.
-      logger_.error "cannot read back - likely brand new chip" --tags={"size-ba":"$(data-size-ba)"}
-      return
+  block-protection-value -> int:
+    return read-register_ REG-STATUS_ --mask=STATUS-BP-MASK_
 
-    logger_.debug "reading back bytes from sram" --tags={"size":"$(data-size)"}
-    restored-map := tison.decode (sram-data_.read-address DATA-START-ADDRESS_ data-size)
-    data_.clear
-    //restored-map.keys.do:
-    //  data_[it] = restored-map[it]
-    data_ = restored-map.copy
-    logger_.debug "map restored" --tags={"size":"$(data_.size)"}
-
+  block-protection-enabled -> bool:
+    return block-protection-value != 0
 
   /** Whether the data in SRAM has a write that is not yet in EEPROM. */
   has-changed -> bool:
@@ -214,11 +156,43 @@ class Eeram:
 
   /** Forces immediate write from SRAM into EEPROM. */
   store -> none:
-    write-register_ REG-COMMAND_ COMMAND-STORE_
+    duration := Duration.ZERO
+    if has-changed:
+      exception := catch:
+        with-timeout STORE-RECALL-TIMEOUT_:
+          duration = Duration.of:
+            write-register_ REG-COMMAND_ COMMAND-STORE_
+            while has-changed:
+              sleep --ms=50
+      logger_.debug "store SRAM in EEPROM" --tags={"duration":"$(duration.in-ms)"}
+    else:
+      logger_.debug "store not necessary - not changed"
 
   /** Forces immediate read from EEPROM into SRAM. */
   recall -> none:
-    write-register_ REG-COMMAND_ COMMAND-RECALL_
+    duration := Duration.ZERO
+    exception := catch:
+      with-timeout STORE-RECALL-TIMEOUT_:
+        duration = Duration.of:
+          write-register_ REG-COMMAND_ COMMAND-RECALL_
+          while has-changed:
+            sleep --ms=50
+    logger_.debug "reading back EEPROM into SRAM" --tags={"duration":"$(duration.in-ms)"}
+
+  write-data address/int bytes/ByteArray -> none:
+    assert: 0 <= address <= (capacity_ - bytes.size)
+    assert: (address + bytes.size) <= capacity_
+    address-ba := ByteArray 2
+    BIG-ENDIAN.put-uint16 address-ba 00 address
+    sram-data_.write-address address-ba bytes
+
+  read-data address/int num-bytes/int -> ByteArray:
+//    print "address: $address num-bytes:$num-bytes max-read:$(capacity_ - num-bytes)"
+    assert: 0 <= address <= (capacity_ - num-bytes)
+    assert: (address + num-bytes) <= capacity_
+    address-ba := ByteArray 2
+    BIG-ENDIAN.put-uint16 address-ba 00 address
+    return sram-data_.read-address address-ba num-bytes
 
   /**
   Reads the given register with the supplied mask.
@@ -226,10 +200,11 @@ class Eeram:
   read-register_ register/int -> any
       --mask/int=0xFF
       --offset/int=(mask.count-trailing-zeros)
-      --device/registers.Registers=sram-control_:
+      --device/i2c.Device=sram-control_:
 
-    raw-value := device.read-u8 register
-    if mask == 0xFFFF and offset == 0:
+    //raw-value := device.read-u8 register
+    raw-value := (device.read-reg register 1)[0]
+    if mask == 0xFF and offset == 0:
       return raw-value
     else:
       masked-value := (raw-value & mask) >> offset
@@ -241,36 +216,47 @@ class Eeram:
   write-register_ register/int value/any -> none
       --mask/int=0xFF
       --offset/int=(mask.count-trailing-zeros)
-      --device/registers.Registers=sram-control_:
+      --device/i2c.Device=sram-control_:
 
     max/int := mask >> offset
     assert: ((value & ~max) == 0)
 
     if (mask == 0xFF) and (offset == 0):
-      device.write-u8 register (value & 0xFF)
+      //device.write-u8 register (value & 0xFF)
+      device.write-reg register #[(value & 0xFF)]
     else:
-      new-value/int := device.read-u8 register
+      //new-value/int := device.read-u8 register
+      new-value := (device.read-reg register 1)[0]
       new-value     &= ~mask
       new-value     |= (value << offset)
-      device.write-u8 register new-value
+      //device.write-u8 register new-value
+      device.write-reg register #[new-value]
+
+    // Required due to the device not acknowledging during Store and Recall
+    // operations, nor during internal STATUS register write cycles.  Control is
+    // passed back to the system before the ACK arrives.  If a subsequent
+    // operation is attempted before the ACK arrives, the bus errors out and
+    // sometimes doesn't recover.
+    sleep INTER-I2C-SLEEP-TIME_
 
   /**
-  Dumps memory content in a hex-editor style screen dump. */
+  Dumps memory content in a hex-editor style screen dump for troubleshooting.
 
-  dump-sram start/int=0 --rows/int?=null --cols/int=16:
-    // Round down to the nearest $cols boundary.
+  Displays $rows of data, starting at $start, with each row having $cols columns.
+    Display starts at the nearest $cols boundary. ($start will go back to the
+    nearest boundary before the indicated start address).
+  */
+  dump-sram start/int=0 --rows/int --cols/int=16:
+    assert: 0 < cols
+    size/int := 0
+
+    // Start at the nearest $cols boundary, less than the start.
     start = (start / cols) * cols
 
-    // If rows not given, determine the dump size by looking at the int16 (data
-    // size variable) stored in at $DATA-SIZE-ADDRESS_.
-    if rows == null:
-      size-data := sram-data_.read-address DATA-SIZE-ADDRESS_ 2
-      size := BIG-ENDIAN.uint16 size-data 00
-      rows = (size + cols - 1) / cols
+    assert: 0 <= start <= (capacity_ - cols)
+    //assert: start + (rows * cols) <= capacity_
 
-    assert: 0 <= start <= capacity_
-    assert: (start + rows * cols) <= capacity_
-
+    print " - ASE Enabled : $(ase-enabled)"
     print " - Has Changed : $has-changed"
     rows.repeat: | r/int |
       addr := start + (r * cols)
@@ -279,8 +265,9 @@ class Eeram:
       data := sram-data_.read-address addr-ba cols
       converted-string := render-ascii_ data
 
-      line := "0x$(%02x addr): $data   $converted-string"
-      print line
+      print " 0x$(%02x addr): $data   $converted-string"
+
+    sleep INTER-I2C-SLEEP-TIME_
 
   /** Converts byte array cell to printable ascii string, or with a '.'. */
   byte-to-ascii_ byte/int -> string:
@@ -300,3 +287,162 @@ class Eeram:
     bytes.do: | b/int |
       str-output += byte-to-ascii_ b
     return str-output
+
+
+class PersistentMap:
+  // Default ztarting address locations for the two data types this function saves
+  static DATA-SIZE-ADDRESS_ ::= 0x00
+  static DATA-START-ADDRESS_ ::= 0x02
+
+  // Original data container.
+  data_/Map := {:}
+  driver_/Eeram := ?
+  logger_/log.Logger := ?
+  capacity_/int := ?
+
+  /** Constructor creating Eemap instance at the same time. */
+  constructor
+      --data/i2c.Device
+      --control/i2c.Device
+      --capacity/int=Eeram.CAPACITY-16KBIT
+      --hs-pin/gpio.Pin?=null
+      --logger/log.Logger=log.default:
+    driver_ = Eeram
+      --control=control
+      --data=data
+      --capacity=capacity
+      --hs-pin=hs-pin
+      --logger=logger
+    logger_ = logger.with-name "PersistentMap"
+    driver_.enable-ase
+    capacity_ = capacity
+    map-from-sram_
+
+  /** Constructor for use with an existing Eemap instance. */
+  constructor driver/Eeram --logger/log.Logger=log.default:
+    driver_ = driver
+    logger_ = logger.with-name "PersistentMap"
+    driver_.enable-ase
+    capacity_ = driver.capacity
+    map-from-sram_
+
+  /**
+  Stores the $value for the given $key.
+
+  If the key is already present, overrides the previous value.  Data will be
+    sent to the SRAM immediately.
+  */
+  operator []= key/any value/any -> none:
+    logger_.debug "adding to data map" --tags={"key":key,"data":value}
+    data_[key] = value
+    if bytes-used >= bytes-capacity:
+      logger_.error "SRAM storage exceeded."
+      return
+    map-to-sram_
+
+  /**
+  Retrieves a value for the given $key, if it exists.
+  */
+  operator [] key/any -> any?:
+    if data_.contains key:
+      logger_.debug "retrieving from data map" --tags={"key":key}
+      return data_[key]
+    else:
+      logger_.error "missing key from data map" --tags={"key":key}
+      return null
+
+  do [block] -> none:
+    data_.do:
+      block.call it
+
+  keys -> List:
+    return data_.keys
+
+  clear -> none:
+    data_.clear
+    map-to-sram_
+
+  remove key/any -> none:
+    data_.remove key
+    map-to-sram_
+
+  /** Return the current capacity only (in KB). */
+  /* 2 bytes used to store the data size for later reads */
+  bytes-capacity -> int:
+    return capacity_ - 2
+
+  /** Returns the number of bytes used */
+  bytes-used object/any=data_ -> int:
+    return (tison.encode object).size
+
+  /** Returns the number of bytes available */
+  /* 2 bytes used to store the data size for later reads */
+  bytes-available -> int:
+    return bytes-capacity - bytes-used - 2
+
+  ase-enabled -> bool:
+    return driver_.ase-enabled
+
+  enable-ase -> none:
+    driver_.enable-ase
+
+  disable-ase -> none:
+    driver_.disable-ase
+
+  has-changed -> bool:
+    return driver_.has-changed
+
+  store -> none:
+    driver_.store
+
+  recall -> none:
+    driver_.recall
+
+  /** Stores the current map in the SRAM device. */
+  map-to-sram_ -> none:
+    data-bytes := tison.encode data_
+    data-size-ba := ByteArray 2
+    BIG-ENDIAN.put-uint16 data-size-ba 00 data-bytes.size
+    logger_.debug "saving data map to SRAM" --tags={"size":"$(data-bytes.size)"}
+    driver_.write-data DATA-SIZE-ADDRESS_ data-size-ba
+    driver_.write-data DATA-START-ADDRESS_ data-bytes
+
+  /** Stores the current map in the SRAM device. */
+  map-from-sram_ -> none:
+    data-size-ba := driver_.read-data DATA-SIZE-ADDRESS_ 2
+    data-size := BIG-ENDIAN.uint16 data-size-ba 00
+    if data-size-ba == #[0xff, 0xff]:
+      // probably never been used before, or overwritten/corrupt.
+      logger_.error "cannot read back - likely brand new chip" --tags={"size-ba":"$(data-size-ba)"}
+      return
+
+    logger_.debug "reading back bytes from SRAM" --tags={"size":"$(data-size)"}
+    restored-map := tison.decode (driver_.read-data DATA-START-ADDRESS_ data-size)
+    data_.clear
+    data_ = restored-map.copy
+    logger_.debug "map restored" --tags={"size":"$(data_.size)"}
+
+  /**
+  Variant of $Eeram.dump-sram, with defaults suited for PersistentMap.
+  */
+  dump-sram start/int=0 --rows/int?=null --cols/int=16 -> none:
+    // If rows not given, determine the dump size by looking at the data size
+    // variable) stored as an int16 at $DATA-SIZE-ADDRESS_.
+
+    if rows == null:
+      size-data-raw := driver_.read-data DATA-SIZE-ADDRESS_ 2
+      if size-data-raw == #[0xff, 0xff]:
+        // probably never been used before, or overwritten/corrupt.
+        logger_.warn "likely brand new chip, or corrupt" --tags={"size-ba":"$(size-data-raw)"}
+        rows = (capacity_ + cols - 1) / cols
+      else:
+        in-use := BIG-ENDIAN.uint16 size-data-raw 00
+        rows = (in-use + cols - 1) / cols
+
+    print " - Capacity    : $(bytes-capacity)"
+    print " - Used        : $(bytes-used)"
+    print " - Available   : $(bytes-available)"
+    driver_.dump-sram start --rows=rows
+
+  stringify -> string:
+    return "$data_"

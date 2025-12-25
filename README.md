@@ -1,4 +1,4 @@
-# Toit Library for a Microchip 47L04/47C04/47L16/47C16 4/16Kbit IC.
+# Toit Library for a Microchip 47L04/47C04/47L16/47C16 4/16Kbit EERAM IC.
 Toit Driver Library for a Microchip EERAM module - a flash backed ram module,
 which copies data from SRAM to FLASH when it senses power off.
 
@@ -32,16 +32,26 @@ These IC's come in two voltage flavours and two size flavours.  Note that the
 | `47L16` | 16Kbit | 2.7-3.6V |
 | `47C16` | 16Kbit | 4.5-5.5V |
 
+There are different capacities and model numbers available from different
+manufacturers.
+
+
+## Features and Operation
+
 ### Device Wiring
 The IC requries a power capacitor.  A decoupling capacitor is also recommended.
 There are no built-in pull up resistors either.  Wiring diagrams are given in
 the datasheet.
 
-## Quick Start Information
-Use the following steps to get operational quickly:
-- Follow Wiring Diagrams to get the device connected correctly.
+### Auto Store Enable (ASE)
+> [!WARNING]
+> When the device is first turned on, 'Auto StoreEnable' (ASE) feature is
+> disabled.  Until this is enabled the automatic save feature will not happen.
+> Changing this feature is set immediately on the device in flash and does not
+> need to be set again on the next power on reset.
 
-
+ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
+The current setting can be determined using `driver.ase-enabled`
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
