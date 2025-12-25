@@ -36,12 +36,15 @@ There are different capacities and model numbers available from different
 manufacturers.
 
 
-## Features
+## Features/Operation
 
 ### Device Wiring
 The IC requries a power capacitor.  A decoupling capacitor is also recommended.
-There are no built-in pull up resistors either.  Wiring diagrams are given in
-the datasheet.
+There are no built-in pull up resistors either.  The datasheet shows that the
+device will function without a power capacitor, however if power is removed
+during a store operation, the data may become corrupt.  The datasheet gives
+example wiring diagrams, and makes recommendations about the capacitor types
+and values that are best to use.
 
 ### Auto Store Enable (ASE)
 > [!WARNING]
@@ -53,11 +56,11 @@ the datasheet.
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`
 
-## Operation
-The library comes in the form of two function libraries:
-* `Eeram` class:  The code implementing the Eeram.
-* `PersistentMap` class:  Implements an Eeram-backed Map object, using the Eeram
-  class.
+### Library Classes
+The library comes in the form of two classes:
+* `Eeram` class:  The code implementing the Eeram features.
+* `PersistentMap` class:  Implements an Eeram-backed Map object (depends on the
+  Eeram class.)
 
 ### Specific Functions
 
