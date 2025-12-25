@@ -259,7 +259,7 @@ class Eeram:
       data := sram-data_.read-address addr-ba cols
       converted-string := render-ascii_ data
 
-      print " 0x$(%02x addr): $data   $converted-string"
+      print " 0x$(%04x addr): $data   $converted-string"
 
     sleep INTER-I2C-SLEEP-TIME_
 
