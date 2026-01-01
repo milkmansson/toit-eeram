@@ -5,6 +5,7 @@
 import gpio
 import i2c
 import ..src.eeram show *
+import ..src.persistentmap show *
 import log
 
 /**
@@ -19,6 +20,10 @@ print-map map/PersistentMap -> none:
     print " - [$it]: \"$(map[it])\""
 
 main:
+  // Setup logger, and desired log level.
+  logger := log.default.with-level log.INFO-LEVEL
+  logger = logger.with-name "example"
+
   // Initial setup for I2C.
   frequency := 100_000
   sda := gpio.Pin SDA-PIN
@@ -31,22 +36,21 @@ main:
   eeram-data-device := null
   eeram-controller-device := null
   if not scandevices.contains Eeram.I2C-CONTROL-ADDRESS:
-    print "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) not present"
+    logger.info "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) not present"
     error = true
   if not scandevices.contains Eeram.I2C-DATA-ADDRESS:
-    print "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) not present"
+    logger.info "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) not present"
     error = true
 
   // Error hapened, can't continue
   if error: return
 
-  print "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) present"
-  print "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) present"
+  logger.info "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) present"
+  logger.info "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) present"
 
   eeram-controller-device = bus.device Eeram.I2C-CONTROL-ADDRESS
   eeram-data-device = bus.device Eeram.I2C-DATA-ADDRESS
 
-  logger := log.default.with-level log.INFO-LEVEL
 
   p-map := PersistentMap
       --control=eeram-controller-device
@@ -58,20 +62,22 @@ main:
   print " - ASE Enabled : $(p-map.ase-enabled)"
   print " - Has Changed : $(p-map.has-changed)"
   print
-  print "Enabling ASE..."
-  p-map.enable-ase
-  print " - ASE Enabled : $(p-map.ase-enabled)"
-  print
+  if not p-map.ase-enabled:
+    print "Enabling ASE..."
+    p-map.enable-ase
+    print " - ASE Enabled : $(p-map.ase-enabled)"
+    print
+
   print "Existing Data... (has changed : $(p-map.has-changed))"
   print-map p-map
   print
   print "Storing a value..."
-  p-map["Some key"] = "some value"
+  p-map["new-key"] = "some new value"
   print
   print "Storing a value (the time)..."
-  p-map["time"] = "$(Time.now)"
+  p-map["last-run-time"] = "$(Time.now)"
   print
-  print "New Data... (has changed :$(p-map.has-changed))"
+  print "Data NOW... (has changed :$(p-map.has-changed))"
   print-map p-map
   print
   print "Storing Data to EEPROM manually..."
