@@ -191,7 +191,7 @@ class PersistentMap:
       return
 
     // Read data bytes (and checksum bytes) back from device.
-    logger_.debug "reading back bytes from SRAM" --tags={"size":"$(data-size-int)"}
+    logger_.debug "reading back bytes from SRAM" --tags={"bytes":"$(data-size-int)"}
     restored-data := driver_.read-data DATA-START-ADDRESS_ data-size-int
 
     // Check data against checksum.
@@ -210,7 +210,7 @@ class PersistentMap:
     restored-map := tison.decode restored-data
     data_.clear
     data_ = restored-map.copy
-    logger_.debug "map restored" --tags={"size":"$(data_.size)"}
+    logger_.debug "map restored" --tags={"items":"$(data_.size)","bytes":data-size-int}
     used_ = data_.size
 
   /**
