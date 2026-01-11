@@ -189,8 +189,9 @@ class Eeram:
   */
   read-register_ register/int -> any
       --mask/int=0xFF
-      --offset/int=(mask.count-trailing-zeros)
+      --offset/int?=null
       --device/i2c.Device=sram-control_:
+    if not offset: offset = mask.count-trailing-zeros
 
     //raw-value := device.read-u8 register
     raw-value := (device.read-reg register 1)[0]
@@ -205,9 +206,9 @@ class Eeram:
   */
   write-register_ register/int value/any -> none
       --mask/int=0xFF
-      --offset/int=(mask.count-trailing-zeros)
+      --offset/int?=null
       --device/i2c.Device=sram-control_:
-
+    if not offset: offset = mask.count-trailing-zeros
     max/int := mask >> offset
     assert: ((value & ~max) == 0)
 
