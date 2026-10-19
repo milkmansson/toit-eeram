@@ -88,19 +88,32 @@ The library comes in the form of two classes:
   above `Eeram` class.)
 
 ### Specific Functions
-| class | functions | description |
-| - | - | - |
-| `Eeram` | `read-data`, `write-data` | Read or write bytes at an address of the SRAM array.  Throws `OUT_OF_BOUNDS` instead of wrapping around at the end of the device. |
-| `Eeram` | `store`, `recall`, `has-changed` | Copy SRAM to EEPROM or back, and report whether the SRAM changed since the last store or recall.  `store` does nothing when there is no change. |
-| `Eeram` | `enable-ase`, `disable-ase`, `ase-enabled` | Control the Auto-Store feature. |
-| `Eeram` | `enable-block-protection`, `disable-block-protection`, `block-protection-enabled`, `block-protection-value` | Write-protect the upper part of the array. |
-| `Eeram` | `event-detected`, `clear-event` | Read and clear the flag set by the HS (Hardware Store) pin. |
-| `Eeram` | `dump-sram` | Print a hex-editor style dump, for troubleshooting. |
-| `PersistentMap` | `[]`, `[]=`, `get`, `contains`, `remove`, `clear` | Map access.  `[]=` saves to the SRAM immediately. |
-| `PersistentMap` | `keys`, `values`, `do`, `size`, `is-empty` | Map iteration and size. |
-| `PersistentMap` | `store`, `recall`, `has-changed`, `enable-ase`, `disable-ase`, `ase-enabled` | Same as the `Eeram` functions of that name. |
-| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. |
-| `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. |
+| class | functions | description | EEPROM wear |
+| - | - | - | - |
+| `Eeram` | `read-data`, `write-data` | Read or write bytes at an address of the SRAM array.  Throws `OUT_OF_BOUNDS` instead of wrapping around at the end of the device. | None (SRAM only). |
+| `Eeram` | `store`, `recall`, `has-changed` | Copy SRAM to EEPROM or back, and report whether the SRAM changed since the last store or recall.  `store` does nothing when there is no change. | `store` uses one store cycle.  `recall` and `has-changed` use none. |
+| `Eeram` | `enable-ase`, `disable-ase`, `ase-enabled` | Control the Auto-Store feature. | The ASE bit is nonvolatile, so a change is a STATUS write cycle (skipped when unchanged).  Reading uses none. |
+| `Eeram` | `enable-block-protection`, `disable-block-protection`, `block-protection-enabled`, `block-protection-value` | Write-protect the upper part of the array. | As for ASE: the BP bits are nonvolatile. |
+| `Eeram` | `event-detected`, `clear-event` | Read and clear the flag set by the HS (Hardware Store) pin. | As for ASE: the EVENT bit is nonvolatile. |
+| `Eeram` | `dump-sram` | Print a hex-editor style dump, for troubleshooting. | None. |
+| `PersistentMap` | `[]`, `[]=`, `get`, `contains`, `remove`, `clear` | Map access.  `[]=` saves to the SRAM immediately. | None (SRAM only) until a store happens. |
+| `PersistentMap` | `keys`, `values`, `do`, `size`, `is-empty` | Map iteration and size. | None. |
+| `PersistentMap` | `store`, `recall`, `has-changed`, `enable-ase`, `disable-ase`, `ase-enabled` | Same as the `Eeram` functions of that name. | Same as the `Eeram` functions. |
+| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. | None. |
+| `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. | None. |
+
+### EEPROM wear
+- SRAM reads and writes do not wear the EEPROM: "Infinite read and write cycles
+  to SRAM".
+- A store copies the SRAM into the EEPROM.  The datasheet rates the EEPROM at
+  "1,000,000 Store cycles" (at +25 °C).  A store happens on `store`, on the HS
+  pin, and at power-off when ASE is enabled: "the Auto-Store will only be
+  initiated if the AM bit in the STATUS register is set to a '1'", that is, if
+  the SRAM changed.
+- The datasheet gives no endurance figure for the nonvolatile STATUS bits (ASE,
+  BP, EVENT).  The driver skips a STATUS write when the bit already has the
+  requested value, and skips `store` when nothing changed.
+- Estimated lifetimes are in the tip at the top.
 
 ### Timing
 The device does not acknowledge while it runs a Store, a Recall or a STATUS
