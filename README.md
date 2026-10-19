@@ -29,7 +29,7 @@ the SRAM. Recall can also be initiated through software control.
 > | Estimated lifetime with one store per power-off, whatever the update rate:  A store a minute ≈ 1.9 years, a store an hour ≈ 114 years, a store a day ≈ 2,700 years. | Estimated lifetime for a small value written every second ≈ 5 months, every minute ≈ 24 years, every hour ≈ 1,400 years. |
 > <details>
 >
-> <summary>How these were calculated...</summary>
+> <summary>How estimates were established...</summary>
 >
 > The lifetimes are estimates.  The flash figures use the model from the
 > Espressif FAQ: one 4096-byte sector, 126 entries per sector, 100 k erase
