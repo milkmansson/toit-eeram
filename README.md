@@ -241,5 +241,6 @@ One would assume you are here because you know what Toit is.  If you dont:
 > iteration (live reloads over Wi-Fi in seconds), robust serviceability, and
 > performance that’s far closer to C than typical scripting options on the
 > ESP32. [[link](https://toitlang.org/)]
-- [Review on Soracom](https://soracom.io/blog/internet-of-microcontrollers-made-easy-with-toit-x-soracom/)
-- [Review on eeJournal](https://www.eejournal.com/article/its-time-to-get-toit)
+- [Review on Soracom](https://soracom.io/blog/internet-of-microcontrollers-made-easy-with-toit-x-soracom/).
+- [Review on eeJournal](https://www.eejournal.com/article/its-time-to-get-toit).
+- Toit on [Wikipedia](https://en.wikipedia.org/wiki/Toit).
