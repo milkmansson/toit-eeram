@@ -21,6 +21,23 @@ the SRAM. Recall can also be initiated through software control.
 > use case is for data that is saved once and not saved again, then Toit's
 > [bucket feature](https://libs.toit.io/system/storage/class-Bucket) is probably
 > more than enough.  It is far simpler and requires fewer components.
+>
+> | This chip (EERAM) | Toit flash bucket (ESP32 NVS) |
+> | - | - |
+> | SRAM writes are not limited: "Infinite read and write cycles to SRAM". Only a store wears the EEPROM, which is rated at "1,000,000 Store cycles" (at +25 °C). | Every write goes to flash: "Typical flash lifetime is 100 k erase cycles." NVS has "flash wear leveling by design", and one sector erase can cover up to 126 small values. |
+> | Estimated lifetime with one store per power-off, whatever the update rate: a store a day ≈ 2,700 years, a store an hour ≈ 114 years, a store a minute ≈ 1.9 years. | Estimated lifetime for a small value written every second ≈ 5 months, every minute ≈ 24 years, every hour ≈ 1,400 years. |
+>
+> The lifetimes are estimates.  The flash figures use the model from the
+> Espressif FAQ: one 4096-byte sector, 126 entries per sector, 100 k erase
+> cycles and small values.  Several sectors in the NVS partition extend them.
+> Larger values or a fuller partition shorten them ("The actual factor is lower
+> in practice").  The flash chip on a given board has its own datasheet figure,
+> and 100 k is only the typical value.  Toit flash buckets use NVS
+> (`flash-kv-init_ "nvs" "toit" false` in Toit's
+> [storage.toit](https://github.com/toitlang/toit/blob/master/system/extensions/esp32/storage.toit)).
+> Sources: the EERAM datasheet linked above,
+> [Espressif FAQ on NVS](https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/storage/nvs.html),
+> [ESP-IDF NVS documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/api-reference/storage/nvs_flash.html).
 
 ### Device Types
 These IC's come in two voltage flavours and two size flavours.  Note that the
