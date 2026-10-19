@@ -27,7 +27,13 @@ jobs:
       - name: Analyze
         shell: bash
         run: |
-          toit analyze src tests examples
+          # toit analyze takes one source file at a time.
+          status=0
+          for file in src/*.toit tests/*.toit examples/*.toit; do
+            echo "Analyzing $file"
+            toit analyze "$file" || status=1
+          done
+          exit $status
 
       - name: Test
         shell: bash

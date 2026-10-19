@@ -212,14 +212,8 @@ eeram := Eeram
 ```
 
 ## Tests
-`tests/eeram-mock-test.toit` runs the driver against a simulated chip
-(`tests/mock-eeram.toit`).  No hardware is needed.  From the root of the
-package:
-```
-toit tests/eeram-mock-test.toit
-```
-or `make test`, which is also what the CI workflow (`.github/workflows/ci.yml`)
-runs.
+The driver is tested against a simulated chip, so no hardware is needed.  See
+[tests/README.md](tests/README.md).
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
