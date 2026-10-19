@@ -1,0 +1,36 @@
+# Zero-Clause BSD License
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: toitlang/action-setup@v1
+        with:
+          toit-version: 'v2.0.0-alpha.189'
+
+      - name: Analyze
+        shell: bash
+        run: |
+          toit analyze src tests examples
+
+      - name: Test
+        shell: bash
+        run: |
+          make rebuild-cmake
+          make test

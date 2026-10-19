@@ -18,14 +18,18 @@ the SRAM. Recall can also be initiated through software control.
 > [!TIP]
 > This device is made to store persistent data that could be written at
 > rates high enough to cause damage to typical flash memory.  If the intended
-> use case is for data that is saved once and not saved again, then Toit's
-> [bucket feature](https://libs.toit.io/system/storage/class-Bucket) is probably
-> more than enough.  It is far simpler and requires fewer components.
+> use case is for data that is saved once and not changed often, then Toit's
+> [bucket storage feature](https://libs.toit.io/system/storage/class-Bucket) is
+> probably more than enough.  It writes to the ESP32 flash directly, which is
+> simpler and requires fewer components.
 >
 > | This chip (EERAM) | Toit flash bucket (ESP32 NVS) |
 > | - | - |
 > | SRAM writes are not limited: "Infinite read and write cycles to SRAM". Only a store wears the EEPROM, which is rated at "1,000,000 Store cycles" (at +25 °C). | Every write goes to flash: "Typical flash lifetime is 100 k erase cycles." NVS has "flash wear leveling by design", and one sector erase can cover up to 126 small values. |
-> | Estimated lifetime with one store per power-off, whatever the update rate: a store a day ≈ 2,700 years, a store an hour ≈ 114 years, a store a minute ≈ 1.9 years. | Estimated lifetime for a small value written every second ≈ 5 months, every minute ≈ 24 years, every hour ≈ 1,400 years. |
+> | Estimated lifetime with one store per power-off, whatever the update rate:  A store a minute ≈ 1.9 years, a store an hour ≈ 114 years, a store a day ≈ 2,700 years. | Estimated lifetime for a small value written every second ≈ 5 months, every minute ≈ 24 years, every hour ≈ 1,400 years. |
+> <details>
+>
+> <summary>How these were calculated...</summary>
 >
 > The lifetimes are estimates.  The flash figures use the model from the
 > Espressif FAQ: one 4096-byte sector, 126 entries per sector, 100 k erase
@@ -38,6 +42,10 @@ the SRAM. Recall can also be initiated through software control.
 > Sources: the EERAM datasheet linked above,
 > [Espressif FAQ on NVS](https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/storage/nvs.html),
 > [ESP-IDF NVS documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/api-reference/storage/nvs_flash.html).
+>
+> </details>
+
+
 
 ### Device Types
 These IC's come in two voltage flavours and two size flavours.  Note that the
@@ -82,10 +90,12 @@ ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`.
 
 ### Library Classes
-The library comes in the form of two classes:
+The library comes in the form of three classes:
 * `Eeram` class:  The code implementing the Eeram features.
 * `PersistentMap` class:  Implements an Eeram-backed Map object (utilises the
   above `Eeram` class.)
+* `PersistentCounter` class (`import eeram.persistentcounter`):  A 32-bit
+  counter kept in the SRAM, with a complement for validation.
 
 ### Specific Functions
 | class | functions | description | EEPROM wear |
@@ -95,11 +105,16 @@ The library comes in the form of two classes:
 | `Eeram` | `enable-ase`, `disable-ase`, `ase-enabled` | Control the Auto-Store feature. | The ASE bit is nonvolatile, so a change is a STATUS write cycle (skipped when unchanged).  Reading uses none. |
 | `Eeram` | `enable-block-protection`, `disable-block-protection`, `block-protection-enabled`, `block-protection-value` | Write-protect the upper part of the array. | As for ASE: the BP bits are nonvolatile. |
 | `Eeram` | `event-detected`, `clear-event` | Read and clear the flag set by the HS (Hardware Store) pin. | As for ASE: the EVENT bit is nonvolatile. |
+| `Eeram` | `from-bus`, `scan`, `data-address-for`, `control-address-for` | Create the driver from an `i2c.Bus` and the A1/A2 pin settings (`--a1`, `--a2`), so the two I2C addresses of the chip cannot be mismatched.  `scan` lists chips found. | None. |
+| `Eeram` | `read-uint8`/`16`/`32`, `read-int32`, `read-float64` and the matching `write-` functions | Typed big-endian access at an address. | None (SRAM only). |
 | `Eeram` | `dump-sram` | Print a hex-editor style dump, for troubleshooting. | None. |
 | `PersistentMap` | `[]`, `[]=`, `get`, `contains`, `remove`, `clear` | Map access.  `[]=` saves to the SRAM immediately. | None (SRAM only) until a store happens. |
 | `PersistentMap` | `keys`, `values`, `do`, `size`, `is-empty` | Map iteration and size. | None. |
 | `PersistentMap` | `store`, `recall`, `has-changed`, `enable-ase`, `disable-ase`, `ase-enabled` | Same as the `Eeram` functions of that name. | Same as the `Eeram` functions. |
-| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. | None. |
+| `PersistentMap` | `batch`, `flush`, `pending-flush`, `--no-auto-flush` | Defer SRAM writes and write the map once.  `store` flushes first. | None (fewer SRAM writes). |
+| `PersistentMap` | `load-state` | `LOAD-NEW`, `LOAD-OK` or `LOAD-CORRUPT`, from start-up or the last `recall`. | None. |
+| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting for the map region, including the 8 bytes of header. | None. |
+| `PersistentCounter` | `value`, `increment`, `set`, `reset`, `was-valid` | 32-bit counter, saved to the SRAM on each change. | None (SRAM only) until a store happens. |
 | `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. | None. |
 
 ### EEPROM wear
@@ -127,10 +142,24 @@ The constructors also wait (up to 100 ms) for the device to respond, as it
 cannot be accessed while its Auto-Recall at power-up runs.
 
 ### PersistentMap behaviour
-- The map is encoded with tison and saved with a 2 byte size and a CRC-16
-  (CCITT-FALSE) checksum.  Keys and values must be supported by tison.
-- At startup, stored data that fails the size, checksum or decoding checks is
-  discarded and logged as an error.  The map then starts empty.
+- The map is encoded with tison and saved after an 8 byte header: magic
+  (`EM`), format version, flags, 2 byte size and a CRC-16 (CCITT-FALSE)
+  checksum.  Keys and values must be supported by tison.
+- Data written by the earlier 4 byte header format is not migrated.  It fails
+  the magic check, is discarded, and `load-state` reports `LOAD-CORRUPT`.
+- At startup, stored data that fails the magic, version, size, checksum or
+  decoding checks is discarded and logged as an error.  The map then starts
+  empty.  A blank chip gives `LOAD-NEW`.
+- `--start` and `--size` place the map in part of the device, so several maps
+  (or a map and a `PersistentCounter`) can share one chip.  `store` covers the
+  whole device.
+- `--no-auto-flush` or `batch` defer SRAM writes, so several changes are sent
+  once.  Changes are still validated immediately.  See
+  [persistent-map-batch-example.toit](examples/persistent-map-batch-example.toit).
+- Tasks: bus access and map changes are serialised with a mutex, so several
+  tasks can share one driver.  A `batch` defers the writes of other tasks too.
+  A task may read the in-memory map while another task's write is in
+  progress; a failed write is rolled back afterwards.
 - `[]=` throws `PersistentMap capacity exceeded` when the encoded map no longer
   fits on the device.  The map is left unchanged.
 - A value changed in place (for example a list that has an item added) is only
@@ -154,7 +183,10 @@ frequency := 400_000
 bus := i2c.Bus --sda=SDA-PIN --scl=SCL-PIN --frequency=frequency
 scandevices := bus.scan
 
-// Establish control and data devices.
+// Shortest form: both I2C addresses come from the A1/A2 pin settings.
+eeram-short := Eeram.from-bus bus --a1=false --a2=false
+
+// Or, establish control and data devices by hand.
 if not scandevices.contains Eeram.I2C-CONTROL-ADDRESS:
   print "Eeram CONTROLLER not present"
   return
@@ -186,6 +218,8 @@ package:
 ```
 toit tests/eeram-mock-test.toit
 ```
+or `make test`, which is also what the CI workflow (`.github/workflows/ci.yml`)
+runs.
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please

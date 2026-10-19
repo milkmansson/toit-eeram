@@ -5,6 +5,7 @@
 import log
 import io show BIG-ENDIAN
 import i2c
+import monitor
 
 
 /**
@@ -82,11 +83,89 @@ class Eeram:
   static COMMAND-STORE_  ::= 0b00110011  // Executes a Software Store command.
   static COMMAND-RECALL_ ::= 0b11011101  // Executes a Software Recall command.
 
+  /**
+  Returns the I2C address of the SRAM array for the given address pin settings.
+
+  The $a1 and $a2 flags tell whether the A1 and A2 pins of the chip are tied
+    high.  The result is one of 0x50, 0x52, 0x54 and 0x56.  The control
+    registers of the same chip are at $control-address-for.
+  */
+  static data-address-for --a1/bool=false --a2/bool=false -> int:
+    address := I2C-DATA-ADDRESS
+    if a1: address |= 0b010
+    if a2: address |= 0b100
+    return address
+
+  /**
+  Returns the I2C address of the control registers for the given address pin
+    settings.
+
+  The $a1 and $a2 flags tell whether the A1 and A2 pins of the chip are tied
+    high.  The result is one of 0x18, 0x1A, 0x1C and 0x1E.  The SRAM array of
+    the same chip is at $data-address-for.
+  */
+  static control-address-for --a1/bool=false --a2/bool=false -> int:
+    address := I2C-CONTROL-ADDRESS
+    if a1: address |= 0b010
+    if a2: address |= 0b100
+    return address
+
+  /**
+  Constructs an Eeram driver for the chip on the $bus with the given address
+    pin settings.
+
+  The $a1 and $a2 flags tell whether the A1 and A2 pins of the chip are tied
+    high.  Both I2C devices of the chip (the SRAM array and the control
+    registers) are derived from them, so they can not be mismatched.
+
+  Throws if either device does not respond on the bus.  See the main constructor
+    for the other arguments.
+  */
+  constructor.from-bus bus/i2c.Bus
+      --a1/bool=false
+      --a2/bool=false
+      --capacity/int=CAPACITY-16KBIT
+      --ack-polling/bool=false
+      --logger/log.Logger=log.default:
+    data-address := data-address-for --a1=a1 --a2=a2
+    control-address := control-address-for --a1=a1 --a2=a2
+    if not bus.test data-address:
+      throw "EERAM SRAM array not found at 0x$(%02x data-address)"
+    if not bus.test control-address:
+      throw "EERAM control registers not found at 0x$(%02x control-address)"
+    return Eeram
+        --data=(bus.device data-address)
+        --control=(bus.device control-address)
+        --capacity=capacity
+        --ack-polling=ack-polling
+        --logger=logger
+
+  /**
+  Finds the chips on the $bus.
+
+  Returns a list with one map per chip found, with the boolean keys "a1" and
+    "a2" (the address pin settings, as used by `Eeram.from-bus`).  A chip is found when
+    both its SRAM array and its control registers respond.
+  */
+  static scan bus/i2c.Bus -> List:
+    found := []
+    [false, true].do: | a1/bool |
+      [false, true].do: | a2/bool |
+        data-address := data-address-for --a1=a1 --a2=a2
+        control-address := control-address-for --a1=a1 --a2=a2
+        if (bus.test data-address) and (bus.test control-address):
+          found.add {"a1": a1, "a2": a2}
+    return found
+
   sram-data_/i2c.Device := ?
   sram-control_/i2c.Device := ?
   logger_/log.Logger := ?
   capacity_/int := ?
   ack-polling_/bool := ?
+
+  // Serialises the bus transactions of tasks.  Held for a whole register
+  // access, including the wait for the device to become ready again.
+  mutex_ ::= monitor.Mutex
 
   /**
   Constructs an Eeram driver.
@@ -300,7 +379,8 @@ class Eeram:
     if not (0 <= address <= (capacity_ - bytes.size)): throw "OUT_OF_BOUNDS"
     address-ba := ByteArray 2
     BIG-ENDIAN.put-uint16 address-ba 0 address
-    sram-data_.write-address address-ba bytes
+    mutex_.do:
+      sram-data_.write-address address-ba bytes
 
   /**
   Reads $num-bytes bytes from the SRAM, starting at $address.
@@ -312,7 +392,79 @@ class Eeram:
     if not (0 <= address <= (capacity_ - num-bytes)): throw "OUT_OF_BOUNDS"
     address-ba := ByteArray 2
     BIG-ENDIAN.put-uint16 address-ba 0 address
-    return sram-data_.read-address address-ba num-bytes
+    mutex_.do:
+      return sram-data_.read-address address-ba num-bytes
+    unreachable
+
+  /**
+  Reads an unsigned 8-bit value at the $address.
+
+  Throws "OUT_OF_BOUNDS" if the $address is past the end of the device.
+  */
+  read-uint8 address/int -> int:
+    return BIG-ENDIAN.uint8 (read-data address 1) 0
+
+  /** Writes the unsigned 8-bit $value at the $address.  See $read-uint8. */
+  write-uint8 address/int value/int -> none:
+    bytes := ByteArray 1
+    BIG-ENDIAN.put-uint8 bytes 0 value
+    write-data address bytes
+
+  /**
+  Reads an unsigned 16-bit value (big-endian) at the $address.
+
+  Throws "OUT_OF_BOUNDS" if the value would pass the end of the device.
+  */
+  read-uint16 address/int -> int:
+    return BIG-ENDIAN.uint16 (read-data address 2) 0
+
+  /** Writes the unsigned 16-bit $value (big-endian) at the $address. */
+  write-uint16 address/int value/int -> none:
+    bytes := ByteArray 2
+    BIG-ENDIAN.put-uint16 bytes 0 value
+    write-data address bytes
+
+  /**
+  Reads an unsigned 32-bit value (big-endian) at the $address.
+
+  Throws "OUT_OF_BOUNDS" if the value would pass the end of the device.
+  */
+  read-uint32 address/int -> int:
+    return BIG-ENDIAN.uint32 (read-data address 4) 0
+
+  /** Writes the unsigned 32-bit $value (big-endian) at the $address. */
+  write-uint32 address/int value/int -> none:
+    bytes := ByteArray 4
+    BIG-ENDIAN.put-uint32 bytes 0 value
+    write-data address bytes
+
+  /**
+  Reads a signed 32-bit value (big-endian) at the $address.
+
+  Throws "OUT_OF_BOUNDS" if the value would pass the end of the device.
+  */
+  read-int32 address/int -> int:
+    return BIG-ENDIAN.int32 (read-data address 4) 0
+
+  /** Writes the signed 32-bit $value (big-endian) at the $address. */
+  write-int32 address/int value/int -> none:
+    bytes := ByteArray 4
+    BIG-ENDIAN.put-int32 bytes 0 value
+    write-data address bytes
+
+  /**
+  Reads a 64-bit float (big-endian) at the $address.
+
+  Throws "OUT_OF_BOUNDS" if the value would pass the end of the device.
+  */
+  read-float64 address/int -> float:
+    return BIG-ENDIAN.float64 (read-data address 8) 0
+
+  /** Writes the 64-bit float $value (big-endian) at the $address. */
+  write-float64 address/int value/float -> none:
+    bytes := ByteArray 8
+    BIG-ENDIAN.put-float64 bytes 0 value
+    write-data address bytes
 
   /**
   Reads the given register with the supplied mask.
@@ -323,13 +475,14 @@ class Eeram:
       --device/i2c.Device=sram-control_:
     if not offset: offset = mask.count-trailing-zeros
 
-    //raw-value := device.read-u8 register
-    raw-value := (device.read-reg register 1)[0]
-    if mask == 0xFF and offset == 0:
-      return raw-value
-    else:
-      masked-value := (raw-value & mask) >> offset
-      return masked-value
+    mutex_.do:
+      raw-value := (device.read-reg register 1)[0]
+      if mask == 0xFF and offset == 0:
+        return raw-value
+      else:
+        masked-value := (raw-value & mask) >> offset
+        return masked-value
+    unreachable
 
   /**
   Writes the given register with the supplied mask.
@@ -348,22 +501,24 @@ class Eeram:
     max/int := mask >> offset
     assert: ((value & ~max) == 0)
 
-    if (mask == 0xFF) and (offset == 0):
-      device.write-reg register #[(value & 0xFF)]
-    else:
-      current := (device.read-reg register 1)[0]
-      new-value := (current & ~mask) | (value << offset)
-      // A STATUS register write triggers an internal write cycle, so skip it
-      // when nothing changes.
-      if new-value == current: return
-      device.write-reg register #[new-value]
+    mutex_.do:
+      if (mask == 0xFF) and (offset == 0):
+        device.write-reg register #[(value & 0xFF)]
+      else:
+        current := (device.read-reg register 1)[0]
+        new-value := (current & ~mask) | (value << offset)
+        // A STATUS register write triggers an internal write cycle, so skip it
+        // when nothing changes.
+        if new-value == current: return
+        device.write-reg register #[new-value]
 
-    // Required due to the device not acknowledging during Store and Recall
-    // operations, nor during internal STATUS register write cycles.  Control is
-    // passed back to the system before the ACK arrives.  If a subsequent
-    // operation is attempted before the ACK arrives, the bus errors out and
-    // sometimes doesn't recover.
-    wait-ready_ wait
+      // Required due to the device not acknowledging during Store and Recall
+      // operations, nor during internal STATUS register write cycles.  Control
+      // is passed back to the system before the ACK arrives.  If a subsequent
+      // operation is attempted before the ACK arrives, the bus errors out and
+      // sometimes doesn't recover.  The lock is held meanwhile, so tasks do
+      // not run into the busy device.
+      wait-ready_ wait
 
   /**
   Dumps memory content in a hex-editor style screen dump for troubleshooting.

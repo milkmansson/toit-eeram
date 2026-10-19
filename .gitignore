@@ -2,6 +2,7 @@
 
 ## Toit 
 .packages/
+build/
 .jaguar
 
 # Refernce Information
