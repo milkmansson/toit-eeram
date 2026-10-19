@@ -157,8 +157,9 @@ class Eeram:
           found.add {"a1": a1, "a2": a2}
     return found
 
-  sram-data_/i2c.Device := ?
-  sram-control_/i2c.Device := ?
+  // Untyped on purpose, see the constructor.
+  sram-data_ := ?
+  sram-control_ := ?
   logger_/log.Logger := ?
   capacity_/int := ?
   ack-polling_/bool := ?
@@ -174,6 +175,11 @@ class Eeram:
     device is the control registers (see $I2C-CONTROL-ADDRESS).  The $capacity
     must be $CAPACITY-4KBIT or $CAPACITY-16KBIT.
 
+  The $data and $control devices are normally $i2c.Device objects.  They are not
+    typed, so that a simulated device can be used in tests.  They must provide
+    the $i2c.Device methods `read-reg`, `write-reg`, `read-address` and
+    `write-address`.
+
   The constructor waits for the device to respond, as the device cannot be
     accessed while its Auto-Recall at power-up runs.  It throws the I2C error if
     the device does not respond within 100 ms.
@@ -185,8 +191,8 @@ class Eeram:
     the worst-case time.  This is experimental, and is off by default.
   */
   constructor
-      --data/i2c.Device
-      --control/i2c.Device
+      --data
+      --control
       --capacity/int=CAPACITY-16KBIT
       --ack-polling/bool=false
       --logger/log.Logger=log.default:
@@ -472,7 +478,7 @@ class Eeram:
   read-register_ register/int -> any
       --mask/int=0xFF
       --offset/int?=null
-      --device/i2c.Device=sram-control_:
+      --device=sram-control_:
     if not offset: offset = mask.count-trailing-zeros
 
     mutex_.do:
@@ -495,7 +501,7 @@ class Eeram:
   write-register_ register/int value/any -> none
       --mask/int=0xFF
       --offset/int?=null
-      --device/i2c.Device=sram-control_
+      --device=sram-control_
       --wait/Duration=STATUS-WRITE-WAIT_:
     if not offset: offset = mask.count-trailing-zeros
     max/int := mask >> offset

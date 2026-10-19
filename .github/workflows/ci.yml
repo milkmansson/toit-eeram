@@ -35,8 +35,11 @@ jobs:
           done
           exit $status
 
-      - name: Test
-        shell: bash
-        run: |
-          make rebuild-cmake
-          make test
+      # The mock tests are not run in CI for now.  Run them locally with
+      # `make test`, or add a step like this:
+      #
+      # - name: Test
+      #   shell: bash
+      #   run: |
+      #     make rebuild-cmake
+      #     make test

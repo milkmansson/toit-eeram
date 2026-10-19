@@ -94,8 +94,8 @@ class PersistentMap:
   See $Eeram.constructor for the $ack-polling option.
   */
   constructor
-      --data/i2c.Device
-      --control/i2c.Device
+      --data
+      --control
       --capacity/int=Eeram.CAPACITY-16KBIT
       --auto-store/bool=true
       --start/int=0
