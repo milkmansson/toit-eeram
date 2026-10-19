@@ -23,6 +23,7 @@ import expect show *
 import log
 import ..src.eeram show *
 import ..src.persistentmap show *
+import ..src.persistentcounter show *
 import .mock-eeram
 
 QUIET ::= log.default.with-level log.FATAL-LEVEL
@@ -35,12 +36,15 @@ make-eeram chip/MockEeramChip --ack-polling/bool=false -> Eeram:
       --ack-polling=ack-polling
       --logger=QUIET
 
-make-map chip/MockEeramChip --auto-store/bool=true -> PersistentMap:
+make-map chip/MockEeramChip --auto-store/bool=true --start/int=0 --size/int?=null --auto-flush/bool=true -> PersistentMap:
   return PersistentMap
       --data=(MockEeramDevice chip --no-control)
       --control=(MockEeramDevice chip --control)
       --capacity=chip.capacity
       --auto-store=auto-store
+      --start=start
+      --size=size
+      --auto-flush=auto-flush
       --logger=QUIET
 
 expect-throws [block] -> none:
@@ -51,15 +55,19 @@ expect-bytes-equal expected/ByteArray actual/ByteArray -> none:
   expect-equals expected.size actual.size
   expected.size.repeat: expect-equals expected[it] actual[it]
 
-/** Writes a size, checksum and payload frame to the chip, as the driver does. */
-write-frame chip/MockEeramChip payload/ByteArray -> none:
+/** Writes a header and payload frame to the chip, as the driver does. */
+write-frame chip/MockEeramChip payload/ByteArray --version/int=1 -> none:
   crc := Crc16CcittFalse
   crc.add payload
   checksum := crc.get
-  chip.sram[0] = payload.size >> 8
-  chip.sram[1] = payload.size & 0xFF
-  chip.sram.replace 2 checksum
-  chip.sram.replace 4 payload
+  chip.sram[0] = 0x45
+  chip.sram[1] = 0x4D
+  chip.sram[2] = version
+  chip.sram[3] = 0
+  chip.sram[4] = payload.size >> 8
+  chip.sram[5] = payload.size & 0xFF
+  chip.sram.replace 6 checksum
+  chip.sram.replace 8 payload
 
 main:
   test-data-round-trip
@@ -80,6 +88,14 @@ main:
   test-map-capacity
   test-map-unencodable
   test-map-corrupt
+  test-typed-accessors
+  test-address-helpers
+  test-load-state
+  test-map-region
+  test-map-deferred-flush
+  test-map-batch
+  test-map-tasks
+  test-counter
   print "All eeram tests passed."
 
 test-data-round-trip:
@@ -251,12 +267,16 @@ test-map-frame-layout:
   pmap := make-map chip
   pmap["a"] = 1
   payload := tison.encode {"a": 1}
-  expect-equals payload.size ((chip.sram[0] << 8) | chip.sram[1])
+  expect-equals 0x45 chip.sram[0]
+  expect-equals 0x4D chip.sram[1]
+  expect-equals 1 chip.sram[2]
+  expect-equals 0 chip.sram[3]
+  expect-equals payload.size ((chip.sram[4] << 8) | chip.sram[5])
   crc := Crc16CcittFalse
   crc.add payload
   checksum := crc.get
-  expect-bytes-equal checksum chip.sram[2..4]
-  expect-bytes-equal payload chip.sram[4..4 + payload.size]
+  expect-bytes-equal checksum chip.sram[6..8]
+  expect-bytes-equal payload chip.sram[8..8 + payload.size]
 
 test-map-single-write:
   chip := MockEeramChip 0x800
@@ -349,23 +369,23 @@ test-map-corrupt:
   chip := MockEeramChip 0x800
   pmap := make-map chip
   pmap["a"] = "hello"
-  chip.sram[4] = chip.sram[4] ^ 0x01
+  chip.sram[8] = chip.sram[8] ^ 0x01
   expect (make-map chip).is-empty
 
   // A size that can not fit on the device is rejected without reading.
   chip = MockEeramChip 0x800
   pmap = make-map chip
   pmap["a"] = "hello"
-  chip.sram[0] = 0x7F
-  chip.sram[1] = 0xFF
+  chip.sram[4] = 0x7F
+  chip.sram[5] = 0xFF
   expect (make-map chip).is-empty
 
   // A size of zero is rejected.
   chip = MockEeramChip 0x800
   pmap = make-map chip
   pmap["a"] = "hello"
-  chip.sram[0] = 0
-  chip.sram[1] = 0
+  chip.sram[4] = 0
+  chip.sram[5] = 0
   expect (make-map chip).is-empty
 
   // The test helper that blanks the checksum.
@@ -389,3 +409,194 @@ test-map-corrupt:
   chip = MockEeramChip 0x800
   write-frame chip (tison.encode {"x": 5})
   expect-equals 5 (make-map chip)["x"]
+
+test-typed-accessors:
+  chip := MockEeramChip 0x800
+  eeram := make-eeram chip
+  eeram.write-uint8 0 0xAB
+  expect-equals 0xAB (eeram.read-uint8 0)
+  eeram.write-uint16 2 0xBEEF
+  expect-equals 0xBEEF (eeram.read-uint16 2)
+  expect-equals 0xBE chip.sram[2]
+  eeram.write-uint32 4 0xDEADBEEF
+  expect-equals 0xDEADBEEF (eeram.read-uint32 4)
+  eeram.write-int32 8 -12345
+  expect-equals -12345 (eeram.read-int32 8)
+  eeram.write-float64 16 3.25
+  expect-equals 3.25 (eeram.read-float64 16)
+  expect-equals "OUT_OF_BOUNDS" (catch: eeram.read-uint32 0x7FE)
+  expect-equals "OUT_OF_BOUNDS" (catch: eeram.write-float64 0x7FC 1.0)
+
+test-address-helpers:
+  expect-equals 0x50 (Eeram.data-address-for)
+  expect-equals 0x52 (Eeram.data-address-for --a1)
+  expect-equals 0x54 (Eeram.data-address-for --a2)
+  expect-equals 0x56 (Eeram.data-address-for --a1 --a2)
+  expect-equals 0x18 (Eeram.control-address-for)
+  expect-equals 0x1A (Eeram.control-address-for --a1)
+  expect-equals 0x1C (Eeram.control-address-for --a2)
+  expect-equals 0x1E (Eeram.control-address-for --a1 --a2)
+
+test-load-state:
+  chip := MockEeramChip 0x800
+  expect-equals PersistentMap.LOAD-NEW (make-map chip).load-state
+  pmap := make-map chip
+  pmap["a"] = 1
+  expect-equals PersistentMap.LOAD-OK (make-map chip).load-state
+  // Blank checksum: corrupt.
+  pmap.blank-checksum
+  expect-equals PersistentMap.LOAD-CORRUPT (make-map chip).load-state
+
+  // Foreign data: magic mismatch.
+  chip = MockEeramChip 0x800
+  chip.sram[0] = 0x12
+  chip.sram[1] = 0x34
+  expect-equals PersistentMap.LOAD-CORRUPT (make-map chip).load-state
+
+  // Old 4-byte layout (size, checksum, data) is not migrated.
+  chip = MockEeramChip 0x800
+  payload := tison.encode {"a": 1}
+  chip.sram[1] = payload.size
+  chip.sram.replace 4 payload
+  old := make-map chip
+  expect old.is-empty
+  expect-equals PersistentMap.LOAD-CORRUPT old.load-state
+
+  // Unknown version.
+  chip = MockEeramChip 0x800
+  write-frame chip (tison.encode {"a": 1}) --version=2
+  expect-equals PersistentMap.LOAD-CORRUPT (make-map chip).load-state
+
+  // Recall refreshes the state.
+  chip = MockEeramChip 0x800
+  pmap = make-map chip
+  pmap["a"] = 1
+  pmap.store
+  pmap.recall
+  expect-equals PersistentMap.LOAD-OK pmap.load-state
+
+test-map-region:
+  chip := MockEeramChip 0x800
+  first := make-map chip --start=0 --size=0x100
+  second := make-map chip --start=0x100 --size=0x100
+  first["name"] = "one"
+  second["name"] = "two"
+  expect-equals 0x45 chip.sram[0]
+  expect-equals 0x45 chip.sram[0x100]
+  chip.power-cycle
+  first = make-map chip --start=0 --size=0x100
+  second = make-map chip --start=0x100 --size=0x100
+  expect-equals "one" first["name"]
+  expect-equals "two" second["name"]
+  expect-equals 0x100 first.bytes-capacity
+
+  // A region limits the map.
+  big-bytes := ByteArray 300
+  big-bytes.fill 'x'
+  expect-equals "PersistentMap capacity exceeded" (catch: first["big"] = big-bytes.to-string)
+  // Nothing spilled into the other region.
+  expect-equals "two" second["name"]
+
+  expect-throws: make-map chip --start=0x7F8 --size=0x100
+  expect-throws: make-map chip --start=-1
+  expect-throws: make-map chip --start=0 --size=4
+
+test-map-deferred-flush:
+  chip := MockEeramChip 0x800
+  pmap := make-map chip --no-auto-flush
+  before := chip.data-write-count
+  pmap["a"] = 1
+  pmap["b"] = 2
+  expect-equals before chip.data-write-count
+  expect pmap.pending-flush
+  expect-equals 1 pmap["a"]
+  // Validation still happens immediately.
+  expect-throws: pmap["bad"] = (:: 1)
+  expect (not (pmap.contains "bad"))
+  pmap.flush
+  expect-equals (before + 1) chip.data-write-count
+  expect (not pmap.pending-flush)
+  // Nothing pending: no write.
+  pmap.flush
+  expect-equals (before + 1) chip.data-write-count
+  expect-equals 2 (make-map chip).size
+
+  // Store flushes first.
+  pmap["c"] = 3
+  pmap.store
+  expect (not pmap.pending-flush)
+  chip.power-cycle
+  expect-equals 3 (make-map chip).size
+
+  // Recall discards pending changes.
+  pmap = make-map chip --no-auto-flush
+  pmap["d"] = 4
+  pmap.recall
+  expect (not pmap.pending-flush)
+  expect (not (pmap.contains "d"))
+
+test-map-batch:
+  chip := MockEeramChip 0x800
+  pmap := make-map chip
+  before := chip.data-write-count
+  pmap.batch:
+    pmap["a"] = 1
+    pmap["b"] = 2
+    pmap.remove "a"
+    expect pmap.pending-flush
+    expect-equals before chip.data-write-count
+  expect-equals (before + 1) chip.data-write-count
+  expect (not pmap.pending-flush)
+  expect-equals 1 (make-map chip).size
+
+  // Nested batches write once, at the end of the outer one.
+  before = chip.data-write-count
+  pmap.batch:
+    pmap.batch:
+      pmap["c"] = 3
+    expect-equals before chip.data-write-count
+  expect-equals (before + 1) chip.data-write-count
+
+  // A throwing block still writes what was changed.
+  exception := catch:
+    pmap.batch:
+      pmap["d"] = 4
+      throw "boom"
+  expect-equals "boom" exception
+  expect-equals 3 (make-map chip).size
+
+test-map-tasks:
+  chip := MockEeramChip 0x800
+  pmap := make-map chip
+  done := 0
+  4.repeat: | n/int |
+    task::
+      20.repeat: | i/int | pmap["k-$n-$i"] = i
+      done++
+  while done < 4: sleep --ms=5
+  expect-equals 80 pmap.size
+  // The device holds the complete final state.
+  expect-equals 80 (make-map chip).size
+
+test-counter:
+  chip := MockEeramChip 0x800
+  eeram := make-eeram chip
+  counter := PersistentCounter eeram --address=0x20
+  expect (not counter.was-valid)
+  expect-equals 0 counter.value
+  expect-equals 1 counter.increment
+  expect-equals 6 (counter.increment --by=5)
+  eeram.store
+  chip.power-cycle
+  again := PersistentCounter (make-eeram chip) --address=0x20
+  expect again.was-valid
+  expect-equals 6 again.value
+  // Wraps at 32 bits.
+  again.set 0xFFFFFFFF
+  expect-equals 0 again.increment
+  // A broken complement is detected.
+  chip.sram[0x27] = chip.sram[0x27] ^ 0x01
+  broken := PersistentCounter (make-eeram chip) --address=0x20 --initial=9
+  expect (not broken.was-valid)
+  expect-equals 9 broken.value
+  expect-equals "OUT_OF_BOUNDS" (catch: PersistentCounter (make-eeram chip) --address=0x7FC)

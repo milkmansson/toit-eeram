@@ -9,10 +9,20 @@ import log
 
 /**
 Simple test of the PersistentMap feature of the Eeram driver package.
+
+Creates the I2C devices by hand, to show what the driver needs.  (See
+  persistent-extras-example.toit for the shorter `from-bus` form.)
+
+Set $VERBOSE to dump the SRAM at each step, so the content can be seen in the
+  datastore.  Set $DUMP-ONLY to only print the existing map and a dump, without
+  changing anything.
 */
 
-SDA-PIN := 8
-SCL-PIN := 9
+SDA-PIN ::= 8
+SCL-PIN ::= 9
+
+VERBOSE ::= false
+DUMP-ONLY ::= false
 
 print-map map/PersistentMap -> none:
   map.keys.do:
@@ -30,8 +40,6 @@ main:
 
   // Establish control and data devices.
   error := false
-  eeram-data-device := null
-  eeram-controller-device := null
   if not scandevices.contains Eeram.I2C-CONTROL-ADDRESS:
     logger.info "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) not present"
     error = true
@@ -39,15 +47,14 @@ main:
     logger.info "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) not present"
     error = true
 
-  // Error hapened, can't continue
+  // Error happened, can't continue.
   if error: return
 
   logger.info "Eeram controller (0x$(%02x Eeram.I2C-CONTROL-ADDRESS)) present"
   logger.info "Eeram sram (0x$(%02x Eeram.I2C-DATA-ADDRESS)) present"
 
-  eeram-controller-device = bus.device Eeram.I2C-CONTROL-ADDRESS
-  eeram-data-device = bus.device Eeram.I2C-DATA-ADDRESS
-
+  eeram-controller-device := bus.device Eeram.I2C-CONTROL-ADDRESS
+  eeram-data-device := bus.device Eeram.I2C-DATA-ADDRESS
 
   p-map := PersistentMap
       --control=eeram-controller-device
@@ -59,6 +66,15 @@ main:
   print " - ASE Enabled : $(p-map.ase-enabled)"
   print " - Has Changed : $(p-map.has-changed)"
   print
+
+  if DUMP-ONLY:
+    print "Map Content:"
+    print-map p-map
+    print "Dump SRAM"
+    p-map.dump-sram
+    return
+
+  if VERBOSE: p-map.dump-sram
   if not p-map.ase-enabled:
     print "Enabling ASE..."
     p-map.enable-ase
@@ -67,6 +83,7 @@ main:
 
   print "Existing Data... (has changed : $(p-map.has-changed))"
   print-map p-map
+  if VERBOSE: p-map.dump-sram
   print
   print "Storing a value..."
   p-map["new-key"] = "some new value"
@@ -74,13 +91,14 @@ main:
   print "Storing a value (the time)..."
   p-map["last-run-time"] = "$(Time.now)"
   print
-  print "Data NOW... (has changed :$(p-map.has-changed))"
+  print "Data NOW... (has changed : $(p-map.has-changed))"
   print-map p-map
   print
   print "Storing Data to EEPROM manually..."
   p-map.store
   print
   print "Data now has changed : $(p-map.has-changed)"
+  if VERBOSE: p-map.dump-sram
   print
   print "< reboot/power off this device and do it again >"
   print

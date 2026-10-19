@@ -2,7 +2,6 @@
 // Use of this source code is governed by a Zero-Clause BSD license that can
 // be found in the LICENSE file.
 
-import i2c
 import io
 import serial
 
@@ -164,7 +163,7 @@ An I2C device of a $MockEeramChip.
 Use one instance with --control for the control registers, and one with
   --no-control for the SRAM array.
 */
-class MockEeramDevice implements i2c.Device:
+class MockEeramDevice:
   chip_/MockEeramChip := ?
   control_/bool := ?
   address/int := 0
