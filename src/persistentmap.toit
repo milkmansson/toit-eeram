@@ -17,8 +17,8 @@ A Toit driver library implementing a 'persistent map' using for the Microchip
 (Wholly dependent on the Eeram driver library.  See the Toitdocs and README.md.)
 
 # Layout
-The map lives in a region of the device (all of it by default, see $start and
-  $size on the constructors).  The region starts with an 8-byte header:
+The map lives in a region of the device (all of it by default, see `--start` and
+  `--size` on the constructors).  The region starts with an 8-byte header:
   - bytes 0-1: magic, 0x45 0x4D ("EM").
   - byte 2: format version (currently 1).
   - byte 3: flags (currently 0).
@@ -180,7 +180,7 @@ class PersistentMap:
   Stores the $value for the given $key.
 
   If the key is already present, overrides the previous value.  Data is sent to
-    the SRAM immediately, unless deferred (see $auto-flush and $batch).
+    the SRAM immediately, unless deferred (see `--auto-flush` and $batch).
 
   The $key and $value must be supported by tison (see $tison.encode).  Values
     that are changed in place after being stored (for example by adding to a

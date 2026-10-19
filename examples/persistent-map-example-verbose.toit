@@ -5,6 +5,7 @@
 import i2c
 import log
 import ..src.eeram show *
+import ..src.persistentmap show *
 
 /**
 Simple test of the PersistentMap feature of the Eeram driver package.

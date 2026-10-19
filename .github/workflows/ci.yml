@@ -22,7 +22,7 @@ jobs:
 
       - uses: toitlang/action-setup@v1
         with:
-          toit-version: 'v2.0.0-alpha.189'
+          toit-version: 'v2.0.0-alpha.199'
 
       - name: Analyze
         shell: bash
