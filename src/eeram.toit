@@ -54,6 +54,14 @@ class Eeram:
   static RECALL-WAIT-4KBIT_ ::= Duration --ms=5
   static RECALL-WAIT-16KBIT_ ::= Duration --ms=10
 
+  // Acknowledge polling gives up after this many times the wait above.
+  static ACK-POLL-FACTOR_ ::= 3
+
+  // After power-up the device does not respond until its Auto-Recall has
+  // finished (TRECALL, 5 ms at most).  The timeout is far above that, so that
+  // slow supply ramps are tolerated, but a missing device still fails quickly.
+  static POWER-UP-TIMEOUT_ ::= Duration --ms=100
+
   static REG-STATUS_  ::= 0x00
   static REG-COMMAND_ ::= 0x55
 
@@ -78,6 +86,7 @@ class Eeram:
   sram-control_/i2c.Device := ?
   logger_/log.Logger := ?
   capacity_/int := ?
+  ack-polling_/bool := ?
 
   /**
   Constructs an Eeram driver.
@@ -85,11 +94,22 @@ class Eeram:
   The $data device is the SRAM array (see $I2C-DATA-ADDRESS) and the $control
     device is the control registers (see $I2C-CONTROL-ADDRESS).  The $capacity
     must be $CAPACITY-4KBIT or $CAPACITY-16KBIT.
+
+  The constructor waits for the device to respond, as the device cannot be
+    accessed while its Auto-Recall at power-up runs.  It throws the I2C error if
+    the device does not respond within 100 ms.
+
+  If $ack-polling is true, the wait after a Store, Recall or STATUS register
+    write ends as soon as the device acknowledges again (see "Acknowledge
+    Polling" in the datasheet), instead of always lasting the full worst-case
+    time.  An error is thrown if the device does not respond within three times
+    the worst-case time.  This is experimental, and is off by default.
   */
   constructor
       --data/i2c.Device
       --control/i2c.Device
       --capacity/int=CAPACITY-16KBIT
+      --ack-polling/bool=false
       --logger/log.Logger=log.default:
     assert: capacity == CAPACITY-4KBIT or capacity == CAPACITY-16KBIT
 
@@ -99,6 +119,11 @@ class Eeram:
 
     // Two bytes are used to store the size of the data being written.
     capacity_ = capacity
+    ack-polling_ = ack-polling
+
+    // The device does not respond while its Auto-Recall at power-up runs.
+    power-up-error := poll-ready_ POWER-UP-TIMEOUT_
+    if power-up-error: throw power-up-error
 
     // Log status of chip at startup.
     if not ase-enabled: logger_.warn "ase disabled"
@@ -230,6 +255,37 @@ class Eeram:
     return RECALL-WAIT-16KBIT_
 
   /**
+  Polls the device until it acknowledges, or until the $timeout has passed.
+
+  Reads the STATUS register, which has no side effects.  A device that is busy
+    does not acknowledge, which makes the read fail.
+
+  Returns null once the device responds, otherwise the last error.
+  */
+  poll-ready_ timeout/Duration -> any:
+    start-us := Time.monotonic-us
+    while true:
+      error := catch: sram-control_.read-reg REG-STATUS_ 1
+      if not error: return null
+      if (Time.monotonic-us - start-us) > timeout.in-us: return error
+      sleep --ms=1
+
+  /**
+  Waits until the device is ready again after an operation during which it does
+    not acknowledge.
+
+  Sleeps for the $wait.  When using acknowledge polling, it polls the device
+    instead, and throws if the device does not respond within $ACK-POLL-FACTOR_
+    times the $wait.
+  */
+  wait-ready_ wait/Duration -> none:
+    if not ack-polling_:
+      sleep wait
+      return
+    error := poll-ready_ (Duration --us=(wait.in-us * ACK-POLL-FACTOR_))
+    if error: throw error
+
+  /**
   Writes the $bytes into the SRAM, starting at $address.
 
   Throws "OUT_OF_BOUNDS" if the write would pass the end of the device.  The
@@ -278,10 +334,10 @@ class Eeram:
   /**
   Writes the given register with the supplied mask.
 
-  Waits for the $wait duration afterwards, as the device does not acknowledge
-    while it executes a Store, a Recall or a STATUS register write cycle.  If
-    the register already holds the requested value, nothing is written and no
-    wait takes place.
+  Waits for the $wait duration afterwards (see $wait-ready_), as the device does
+    not acknowledge while it executes a Store, a Recall or a STATUS register
+    write cycle.  If the register already holds the requested value, nothing is
+    written and no wait takes place.
   */
   write-register_ register/int value/any -> none
       --mask/int=0xFF
@@ -307,7 +363,7 @@ class Eeram:
     // passed back to the system before the ACK arrives.  If a subsequent
     // operation is attempted before the ACK arrives, the bus errors out and
     // sometimes doesn't recover.
-    sleep wait
+    wait-ready_ wait
 
   /**
   Dumps memory content in a hex-editor style screen dump for troubleshooting.

@@ -47,18 +47,22 @@ class PersistentMap:
     VCAP pin.  The datasheet requires Auto-Store to be disabled when there is
     none, so boards without the capacitor must use --no-auto-store, and call
     $disable-ase.
+
+  See $Eeram.constructor for the $ack-polling option.
   */
   constructor
       --data/i2c.Device
       --control/i2c.Device
       --capacity/int=Eeram.CAPACITY-16KBIT
       --auto-store/bool=true
+      --ack-polling/bool=false
       --logger/log.Logger=log.default:
     assert: capacity == Eeram.CAPACITY-4KBIT or capacity == Eeram.CAPACITY-16KBIT
     driver_ = Eeram
       --control=control
       --data=data
       --capacity=capacity
+      --ack-polling=ack-polling
       --logger=logger
     logger_ = logger.with-name "persistentmap"
     if auto-store and not driver_.ase-enabled: driver_.enable-ase

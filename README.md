@@ -85,6 +85,17 @@ The library comes in the form of two classes:
 | `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. |
 | `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. |
 
+### Timing
+The device does not acknowledge while it runs a Store, a Recall or a STATUS
+register write cycle.  By default the driver sleeps for the worst-case time
+from the datasheet (plus margin) after each of these.  Constructing `Eeram` or
+`PersistentMap` with `--ack-polling` ends the wait as soon as the device
+acknowledges again ("Acknowledge Polling" in the datasheet).  This is
+experimental and off by default.
+
+The constructors also wait (up to 100 ms) for the device to respond, as it
+cannot be accessed while its Auto-Recall at power-up runs.
+
 ### PersistentMap behaviour
 - The map is encoded with tison and saved with a 2 byte size and a CRC-16
   (CCITT-FALSE) checksum.  Keys and values must be supported by tison.
@@ -139,6 +150,14 @@ eeram := Eeram
       --data=eeram-data-device
       --capacity=Eeram.CAPACITY-16KBIT
 
+```
+
+## Tests
+`tests/eeram-mock-test.toit` runs the driver against a simulated chip
+(`tests/mock-eeram.toit`).  No hardware is needed.  From the root of the
+package:
+```
+toit tests/eeram-mock-test.toit
 ```
 
 ## Issues
