@@ -2,7 +2,6 @@
 // Use of this source code is governed by a Zero-Clause BSD license that can
 // be found in the LICENSE file.
 
-import gpio
 import log
 import io show BIG-ENDIAN
 import i2c
@@ -23,8 +22,10 @@ be initiated through software control.
 */
 
 class Eeram:
-  static I2C-DATA-ADDRESS    := 0x50
-  static I2C-CONTROL-ADDRESS := 0x18
+  /** I2C address of the SRAM array, with the A2 and A1 pins low. */
+  static I2C-DATA-ADDRESS    ::= 0x50
+  /** I2C address of the control registers, with the A2 and A1 pins low. */
+  static I2C-CONTROL-ADDRESS ::= 0x18
 
   // I2C Addresses for SRAM Data Registers (opcode 1010).
   // A2=0 A1=0 → 0x50
@@ -38,18 +39,34 @@ class Eeram:
   // A2=1 A1=0 → 0x1C
   // A2=1 A1=1 → 0x1E
 
-  static CAPACITY-4KBIT := 0x0200   // 0x01FF
-  static CAPACITY-16KBIT := 0x0800  // 0x07FF
+  /** Capacity in bytes of the 47L04 and 47C04 (4 Kbit, addresses 0x000-0x1FF). */
+  static CAPACITY-4KBIT ::= 0x0200
+  /** Capacity in bytes of the 47L16 and 47C16 (16 Kbit, addresses 0x000-0x7FF). */
+  static CAPACITY-16KBIT ::= 0x0800
 
-  static INTER-I2C-SLEEP-TIME_ := Duration --ms=30
-  static STORE-WAIT_ := Duration --ms=30
-  static RECALL-WAIT_ := Duration --ms=10
+  // The device does not acknowledge during Store, Recall and STATUS register
+  // write cycles.  Datasheet maximums (AC Characteristics): TWC 1 ms, TSTORE
+  // 25 ms (16 Kbit) or 8 ms (4 Kbit), TRECALL 5 ms (16 Kbit) or 2 ms (4 Kbit).
+  // The waits below add margin to those maximums.
+  static STATUS-WRITE-WAIT_ ::= Duration --ms=5
+  static STORE-WAIT-4KBIT_ ::= Duration --ms=10
+  static STORE-WAIT-16KBIT_ ::= Duration --ms=30
+  static RECALL-WAIT-4KBIT_ ::= Duration --ms=5
+  static RECALL-WAIT-16KBIT_ ::= Duration --ms=10
+
+  // Acknowledge polling gives up after this many times the wait above.
+  static ACK-POLL-FACTOR_ ::= 3
+
+  // After power-up the device does not respond until its Auto-Recall has
+  // finished (TRECALL, 5 ms at most).  The timeout is far above that, so that
+  // slow supply ramps are tolerated, but a missing device still fails quickly.
+  static POWER-UP-TIMEOUT_ ::= Duration --ms=100
 
   static REG-STATUS_  ::= 0x00
   static REG-COMMAND_ ::= 0x55
 
   static STATUS-CHANGED_ ::= 0b10000000  // Whether the SRAM has been written since last store or recall operation.
-  static STATUS-BP-MASK_ ::= 0b00011100  // Write Protection Bits (See Datasheet - not implemented in this driver).
+  static STATUS-BP-MASK_ ::= 0b00011100  // Write Protection Bits (See Datasheet).
   static STATUS-ASE_     ::= 0b00000010  // Whether Auto Store is Enabled.
   static STATUS-EVENT_   ::= 0b00000001  // Whether an external event has been detected on the HS pin.
 
@@ -69,12 +86,30 @@ class Eeram:
   sram-control_/i2c.Device := ?
   logger_/log.Logger := ?
   capacity_/int := ?
+  ack-polling_/bool := ?
 
-  /** Class Constructor */
+  /**
+  Constructs an Eeram driver.
+
+  The $data device is the SRAM array (see $I2C-DATA-ADDRESS) and the $control
+    device is the control registers (see $I2C-CONTROL-ADDRESS).  The $capacity
+    must be $CAPACITY-4KBIT or $CAPACITY-16KBIT.
+
+  The constructor waits for the device to respond, as the device cannot be
+    accessed while its Auto-Recall at power-up runs.  It throws the I2C error if
+    the device does not respond within 100 ms.
+
+  If $ack-polling is true, the wait after a Store, Recall or STATUS register
+    write ends as soon as the device acknowledges again (see "Acknowledge
+    Polling" in the datasheet), instead of always lasting the full worst-case
+    time.  An error is thrown if the device does not respond within three times
+    the worst-case time.  This is experimental, and is off by default.
+  */
   constructor
       --data/i2c.Device
       --control/i2c.Device
       --capacity/int=CAPACITY-16KBIT
+      --ack-polling/bool=false
       --logger/log.Logger=log.default:
     assert: capacity == CAPACITY-4KBIT or capacity == CAPACITY-16KBIT
 
@@ -84,6 +119,11 @@ class Eeram:
 
     // Two bytes are used to store the size of the data being written.
     capacity_ = capacity
+    ack-polling_ = ack-polling
+
+    // The device does not respond while its Auto-Recall at power-up runs.
+    power-up-error := poll-ready_ POWER-UP-TIMEOUT_
+    if power-up-error: throw power-up-error
 
     // Log status of chip at startup.
     if not ase-enabled: logger_.warn "ase disabled"
@@ -130,16 +170,34 @@ class Eeram:
     raw/int := read-register_ REG-STATUS_ --mask=STATUS-ASE_
     return raw == 1
 
+  /**
+  Enables write protection for the given $portion of the array.
+
+  The $portion is one of the BP-* constants, for example
+    $BP-UPPER-1-4-PROTECTED.  The protected range is at the top of the array
+    (see "Protected Array Address Locations" in the datasheet).  The setting is
+    nonvolatile.
+
+  The device does not acknowledge writes into a protected block, so such a
+    write is expected to fail with an I2C error.
+  */
   enable-block-protection --portion/int=BP-ALL-WRITE-PROTECTED -> none:
     assert: 0 <= portion <= 7
     write-register_ REG-STATUS_ portion --mask=STATUS-BP-MASK_
 
+  /** Disables write protection of the array.  See $enable-block-protection. */
   disable-block-protection -> none:
     enable-block-protection --portion=BP-NONE-WRITE-PROTECTED
 
+  /**
+  The current block protection setting, as one of the BP-* constants.
+
+  See $enable-block-protection.
+  */
   block-protection-value -> int:
     return read-register_ REG-STATUS_ --mask=STATUS-BP-MASK_
 
+  /** Whether any part of the array is write-protected. */
   block-protection-enabled -> bool:
     return block-protection-value != 0
 
@@ -148,40 +206,112 @@ class Eeram:
     raw/int := read-register_ REG-STATUS_ --mask=STATUS-CHANGED_
     return raw == 1
 
-  /** Forces immediate write from SRAM into EEPROM. */
-  // A fixed sleep of 30 ms to guard against issues due to the device not
-  // supporting normal methods of delayed ACKs. See the Datasheet on
-  // "Acknowledge Polling".
+  /**
+  Whether an external event has been detected on the HS (Hardware Store) pin.
+
+  The flag is nonvolatile.  See $clear-event.
+  */
+  event-detected -> bool:
+    raw/int := read-register_ REG-STATUS_ --mask=STATUS-EVENT_
+    return raw == 1
+
+  /** Clears the flag reported by $event-detected. */
+  clear-event -> none:
+    write-register_ REG-STATUS_ 0 --mask=STATUS-EVENT_
+
+  /**
+  Forces immediate write from SRAM into EEPROM.
+
+  Does nothing if the SRAM has not changed since the last store or recall (see
+    $has-changed), which avoids needless EEPROM wear.  Otherwise blocks for the
+    worst-case store time of the device, during which the device does not
+    acknowledge.
+  */
   store -> none:
     if not has-changed:
       logger_.debug "store not necessary - not changed"
       return
-    write-register_ REG-COMMAND_ COMMAND-STORE_
-    sleep STORE-WAIT_
+    write-register_ REG-COMMAND_ COMMAND-STORE_ --wait=store-wait_
     logger_.debug "read SRAM into EEPROM"
 
-  /** Forces immediate read from EEPROM into SRAM. */
-  // A fixed sleep of 10 ms to guard against issues due to the device not
-  // supporting normal methods of delayed ACKs. See the Datasheet on
-  // "Acknowledge Polling".
+  /**
+  Forces immediate read from EEPROM into SRAM.
+
+  Blocks for the worst-case recall time of the device, during which the device
+    does not acknowledge.
+  */
   recall -> none:
-    write-register_ REG-COMMAND_ COMMAND-RECALL_
-    sleep RECALL-WAIT_
+    write-register_ REG-COMMAND_ COMMAND-RECALL_ --wait=recall-wait_
     logger_.debug "read EEPROM into SRAM"
 
+  /** Worst-case store time (with margin) for the configured capacity. */
+  store-wait_ -> Duration:
+    if capacity_ == CAPACITY-4KBIT: return STORE-WAIT-4KBIT_
+    return STORE-WAIT-16KBIT_
+
+  /** Worst-case recall time (with margin) for the configured capacity. */
+  recall-wait_ -> Duration:
+    if capacity_ == CAPACITY-4KBIT: return RECALL-WAIT-4KBIT_
+    return RECALL-WAIT-16KBIT_
+
+  /**
+  Polls the device until it acknowledges, or until the $timeout has passed.
+
+  Reads the STATUS register, which has no side effects.  A device that is busy
+    does not acknowledge, which makes the read fail.
+
+  Returns null once the device responds, otherwise the last error.
+  */
+  poll-ready_ timeout/Duration -> any:
+    start-us := Time.monotonic-us
+    while true:
+      error := catch: sram-control_.read-reg REG-STATUS_ 1
+      if not error: return null
+      if (Time.monotonic-us - start-us) > timeout.in-us: return error
+      sleep --ms=1
+
+  /**
+  Waits until the device is ready again after an operation during which it does
+    not acknowledge.
+
+  Sleeps for the $wait.  When using acknowledge polling, it polls the device
+    instead, and throws if the device does not respond within $ACK-POLL-FACTOR_
+    times the $wait.
+  */
+  wait-ready_ wait/Duration -> none:
+    if not ack-polling_:
+      sleep wait
+      return
+    error := poll-ready_ (Duration --us=(wait.in-us * ACK-POLL-FACTOR_))
+    if error: throw error
+
+  /**
+  Writes the $bytes into the SRAM, starting at $address.
+
+  Throws "OUT_OF_BOUNDS" if the write would pass the end of the device.  The
+    device would otherwise wrap around to address 0 and overwrite the data
+    there.
+
+  The device does not acknowledge writes into a block that is write-protected
+    (see $enable-block-protection), so such a write is expected to fail with an
+    I2C error.
+  */
   write-data address/int bytes/ByteArray -> none:
-    assert: 0 <= address <= (capacity_ - bytes.size)
-    assert: (address + bytes.size) <= capacity_
+    if not (0 <= address <= (capacity_ - bytes.size)): throw "OUT_OF_BOUNDS"
     address-ba := ByteArray 2
-    BIG-ENDIAN.put-uint16 address-ba 00 address
+    BIG-ENDIAN.put-uint16 address-ba 0 address
     sram-data_.write-address address-ba bytes
 
+  /**
+  Reads $num-bytes bytes from the SRAM, starting at $address.
+
+  Throws "OUT_OF_BOUNDS" if the read would pass the end of the device.  The
+    device would otherwise wrap around to address 0.
+  */
   read-data address/int num-bytes/int -> ByteArray:
-//    print "address: $address num-bytes:$num-bytes max-read:$(capacity_ - num-bytes)"
-    assert: 0 <= address <= (capacity_ - num-bytes)
-    assert: (address + num-bytes) <= capacity_
+    if not (0 <= address <= (capacity_ - num-bytes)): throw "OUT_OF_BOUNDS"
     address-ba := ByteArray 2
-    BIG-ENDIAN.put-uint16 address-ba 00 address
+    BIG-ENDIAN.put-uint16 address-ba 0 address
     return sram-data_.read-address address-ba num-bytes
 
   /**
@@ -189,8 +319,9 @@ class Eeram:
   */
   read-register_ register/int -> any
       --mask/int=0xFF
-      --offset/int=(mask.count-trailing-zeros)
+      --offset/int?=null
       --device/i2c.Device=sram-control_:
+    if not offset: offset = mask.count-trailing-zeros
 
     //raw-value := device.read-u8 register
     raw-value := (device.read-reg register 1)[0]
@@ -202,24 +333,29 @@ class Eeram:
 
   /**
   Writes the given register with the supplied mask.
+
+  Waits for the $wait duration afterwards (see $wait-ready_), as the device does
+    not acknowledge while it executes a Store, a Recall or a STATUS register
+    write cycle.  If the register already holds the requested value, nothing is
+    written and no wait takes place.
   */
   write-register_ register/int value/any -> none
       --mask/int=0xFF
-      --offset/int=(mask.count-trailing-zeros)
-      --device/i2c.Device=sram-control_:
-
+      --offset/int?=null
+      --device/i2c.Device=sram-control_
+      --wait/Duration=STATUS-WRITE-WAIT_:
+    if not offset: offset = mask.count-trailing-zeros
     max/int := mask >> offset
     assert: ((value & ~max) == 0)
 
     if (mask == 0xFF) and (offset == 0):
-      //device.write-u8 register (value & 0xFF)
       device.write-reg register #[(value & 0xFF)]
     else:
-      //new-value/int := device.read-u8 register
-      new-value := (device.read-reg register 1)[0]
-      new-value     &= ~mask
-      new-value     |= (value << offset)
-      //device.write-u8 register new-value
+      current := (device.read-reg register 1)[0]
+      new-value := (current & ~mask) | (value << offset)
+      // A STATUS register write triggers an internal write cycle, so skip it
+      // when nothing changes.
+      if new-value == current: return
       device.write-reg register #[new-value]
 
     // Required due to the device not acknowledging during Store and Recall
@@ -227,53 +363,46 @@ class Eeram:
     // passed back to the system before the ACK arrives.  If a subsequent
     // operation is attempted before the ACK arrives, the bus errors out and
     // sometimes doesn't recover.
-    sleep INTER-I2C-SLEEP-TIME_
+    wait-ready_ wait
 
   /**
   Dumps memory content in a hex-editor style screen dump for troubleshooting.
 
   Displays $rows of data, starting at $start, with each row having $cols columns.
     Display starts at the nearest $cols boundary. ($start will go back to the
-    nearest boundary before the indicated start address).
+    nearest boundary before the indicated start address).  The dump stops at
+    the end of the device.
   */
-  dump-sram start/int=0 --rows/int --cols/int=16:
+  dump-sram start/int=0 --rows/int --cols/int=16 -> none:
     assert: 0 < cols
-    size/int := 0
 
     // Start at the nearest $cols boundary, less than the start.
     start = (start / cols) * cols
 
-    assert: 0 <= start <= (capacity_ - cols)
-    //assert: start + (rows * cols) <= capacity_
+    if not (0 <= start <= (capacity_ - cols)): throw "OUT_OF_BOUNDS"
+
+    // Do not read past the end of the device.
+    max-rows := (capacity_ - start) / cols
+    if rows > max-rows: rows = max-rows
 
     print " - ASE Enabled : $(ase-enabled)"
     print " - Has Changed : $has-changed"
     rows.repeat: | r/int |
       addr := start + (r * cols)
-      addr-ba := ByteArray 2
-      BIG-ENDIAN.put-uint16 addr-ba 00 addr
-      data := sram-data_.read-address addr-ba cols
+      data := read-data addr cols
       converted-string := render-ascii_ data
 
       print " 0x$(%04x addr): $data   $converted-string"
 
-    sleep INTER-I2C-SLEEP-TIME_
-
-  /** Converts byte array cell to printable ascii string, or with a '.'. */
-  byte-to-ascii_ byte/int -> string:
-    if byte >= 32 and byte <= 126:
-      return #[byte].to-string
-    return "."
-
   /**
-  Renders a byte-arry into a printable string.
+  Renders a byte-array into a printable string.
 
-  Walks a byte array and uses $byte-to-ascii_ to convert each cell to
-    printable ascii string.  ($byte-to-ascii_ replaces unprintable characters
-    with a full stop.)
+  Replaces unprintable characters with a full stop.
   */
-  render-ascii_ bytes -> string:
-    str-output := ""
-    bytes.do: | b/int |
-      str-output += byte-to-ascii_ b
-    return str-output
+  render-ascii_ bytes/ByteArray -> string:
+    output := ByteArray bytes.size
+    bytes.size.repeat: | i/int |
+      byte := bytes[i]
+      if 32 <= byte <= 126: output[i] = byte
+      else: output[i] = '.'
+    return output.to-string

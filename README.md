@@ -21,6 +21,23 @@ the SRAM. Recall can also be initiated through software control.
 > use case is for data that is saved once and not saved again, then Toit's
 > [bucket feature](https://libs.toit.io/system/storage/class-Bucket) is probably
 > more than enough.  It is far simpler and requires fewer components.
+>
+> | This chip (EERAM) | Toit flash bucket (ESP32 NVS) |
+> | - | - |
+> | SRAM writes are not limited: "Infinite read and write cycles to SRAM". Only a store wears the EEPROM, which is rated at "1,000,000 Store cycles" (at +25 °C). | Every write goes to flash: "Typical flash lifetime is 100 k erase cycles." NVS has "flash wear leveling by design", and one sector erase can cover up to 126 small values. |
+> | Estimated lifetime with one store per power-off, whatever the update rate: a store a day ≈ 2,700 years, a store an hour ≈ 114 years, a store a minute ≈ 1.9 years. | Estimated lifetime for a small value written every second ≈ 5 months, every minute ≈ 24 years, every hour ≈ 1,400 years. |
+>
+> The lifetimes are estimates.  The flash figures use the model from the
+> Espressif FAQ: one 4096-byte sector, 126 entries per sector, 100 k erase
+> cycles and small values.  Several sectors in the NVS partition extend them.
+> Larger values or a fuller partition shorten them ("The actual factor is lower
+> in practice").  The flash chip on a given board has its own datasheet figure,
+> and 100 k is only the typical value.  Toit flash buckets use NVS
+> (`flash-kv-init_ "nvs" "toit" false` in Toit's
+> [storage.toit](https://github.com/toitlang/toit/blob/master/system/extensions/esp32/storage.toit)).
+> Sources: the EERAM datasheet linked above,
+> [Espressif FAQ on NVS](https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/storage/nvs.html),
+> [ESP-IDF NVS documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/api-reference/storage/nvs_flash.html).
 
 ### Device Types
 These IC's come in two voltage flavours and two size flavours.  Note that the
@@ -39,7 +56,7 @@ manufacturers.
 ## Features/Operation
 
 ### Device Wiring
-The IC requries a power capacitor.  A decoupling capacitor is also recommended.
+The IC requires a power capacitor.  A decoupling capacitor is also recommended.
 There are no built-in pull up resistors either.  The datasheet shows that the
 device will function without a power capacitor, however if power is removed
 during a store operation, the data may become corrupt.  The datasheet gives
@@ -48,10 +65,18 @@ and values that are best to use.
 
 ### Auto Store Enable (ASE)
 > [!WARNING]
-> When the device is first turned used out of the box, 'Auto StoreEnable' (ASE)
+> When the device is first used out of the box, the 'Auto Store Enable' (ASE)
 > feature is disabled.  Until this is enabled the automatic save feature will
-> not happen.  This is enabled automatically in the `PersistentMap` class, but
-> not in the main `Eeram` driver.
+> not happen.  This is enabled automatically in the `PersistentMap` class (see
+> the caution below), but not in the main `Eeram` driver.
+
+> [!CAUTION]
+> Auto-Store needs a capacitor on the VCAP pin.  The datasheet states: "If a
+> capacitor is not connected to the VCAP pin, then the VCAP pin must be
+> connected to VCC and the Auto-Store feature must be disabled by writing the
+> ASE bit to a '0' to prevent data corruption in the EEPROM array when power
+> is lost."  On boards without the capacitor, construct `PersistentMap` with
+> `--no-auto-store` and call `disable-ase`.
 
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`.
@@ -63,25 +88,70 @@ The library comes in the form of two classes:
   above `Eeram` class.)
 
 ### Specific Functions
-| class | functions | description |
-| - | - | - |
-| `Eeram` | ...todo... | ...todo... |
-| `PersistentMap` | ...todo... | ...todo... |
+| class | functions | description | EEPROM wear |
+| - | - | - | - |
+| `Eeram` | `read-data`, `write-data` | Read or write bytes at an address of the SRAM array.  Throws `OUT_OF_BOUNDS` instead of wrapping around at the end of the device. | None (SRAM only). |
+| `Eeram` | `store`, `recall`, `has-changed` | Copy SRAM to EEPROM or back, and report whether the SRAM changed since the last store or recall.  `store` does nothing when there is no change. | `store` uses one store cycle.  `recall` and `has-changed` use none. |
+| `Eeram` | `enable-ase`, `disable-ase`, `ase-enabled` | Control the Auto-Store feature. | The ASE bit is nonvolatile, so a change is a STATUS write cycle (skipped when unchanged).  Reading uses none. |
+| `Eeram` | `enable-block-protection`, `disable-block-protection`, `block-protection-enabled`, `block-protection-value` | Write-protect the upper part of the array. | As for ASE: the BP bits are nonvolatile. |
+| `Eeram` | `event-detected`, `clear-event` | Read and clear the flag set by the HS (Hardware Store) pin. | As for ASE: the EVENT bit is nonvolatile. |
+| `Eeram` | `dump-sram` | Print a hex-editor style dump, for troubleshooting. | None. |
+| `PersistentMap` | `[]`, `[]=`, `get`, `contains`, `remove`, `clear` | Map access.  `[]=` saves to the SRAM immediately. | None (SRAM only) until a store happens. |
+| `PersistentMap` | `keys`, `values`, `do`, `size`, `is-empty` | Map iteration and size. | None. |
+| `PersistentMap` | `store`, `recall`, `has-changed`, `enable-ase`, `disable-ase`, `ase-enabled` | Same as the `Eeram` functions of that name. | Same as the `Eeram` functions. |
+| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. | None. |
+| `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. | None. |
+
+### EEPROM wear
+- SRAM reads and writes do not wear the EEPROM: "Infinite read and write cycles
+  to SRAM".
+- A store copies the SRAM into the EEPROM.  The datasheet rates the EEPROM at
+  "1,000,000 Store cycles" (at +25 °C).  A store happens on `store`, on the HS
+  pin, and at power-off when ASE is enabled: "the Auto-Store will only be
+  initiated if the AM bit in the STATUS register is set to a '1'", that is, if
+  the SRAM changed.
+- The datasheet gives no endurance figure for the nonvolatile STATUS bits (ASE,
+  BP, EVENT).  The driver skips a STATUS write when the bit already has the
+  requested value, and skips `store` when nothing changed.
+- Estimated lifetimes are in the tip at the top.
+
+### Timing
+The device does not acknowledge while it runs a Store, a Recall or a STATUS
+register write cycle.  By default the driver sleeps for the worst-case time
+from the datasheet (plus margin) after each of these.  Constructing `Eeram` or
+`PersistentMap` with `--ack-polling` ends the wait as soon as the device
+acknowledges again ("Acknowledge Polling" in the datasheet).  This is
+experimental and off by default.
+
+The constructors also wait (up to 100 ms) for the device to respond, as it
+cannot be accessed while its Auto-Recall at power-up runs.
+
+### PersistentMap behaviour
+- The map is encoded with tison and saved with a 2 byte size and a CRC-16
+  (CCITT-FALSE) checksum.  Keys and values must be supported by tison.
+- At startup, stored data that fails the size, checksum or decoding checks is
+  discarded and logged as an error.  The map then starts empty.
+- `[]=` throws `PersistentMap capacity exceeded` when the encoded map no longer
+  fits on the device.  The map is left unchanged.
+- A value changed in place (for example a list that has an item added) is only
+  saved when it is assigned with `[]=` again.
 
 ## Example
-Please see the [examples](.\examples) folder.  In principle, the device has two
+Please see the [examples](examples/) folder.  In principle, the device has two
 I2C devices, the controller, and the memory device.  The controller receives
 instructions such as `store` and `recall` (pushing data between SRAM and EEPROM)
 and enabling ASE.  The usage pattern is thus:
 ```toit
+import i2c
+import eeram show Eeram
+import eeram.persistentmap show PersistentMap
+
 SDA-PIN := 8
 SCL-PIN := 9
 
 // Initial setup for I2C.
 frequency := 400_000
-sda := gpio.Pin SDA-PIN
-scl := gpio.Pin SCL-PIN
-bus := i2c.Bus --sda=sda --scl=scl --frequency=frequency
+bus := i2c.Bus --sda=SDA-PIN --scl=SCL-PIN --frequency=frequency
 scandevices := bus.scan
 
 // Establish control and data devices.
@@ -92,8 +162,8 @@ if not scandevices.contains Eeram.I2C-DATA-ADDRESS:
   print "Eeram SRAM not present"
   return
 
-eeram-controller-device = bus.device Eeram.I2C-CONTROL-ADDRESS
-eeram-data-device = bus.device Eeram.I2C-DATA-ADDRESS
+eeram-controller-device := bus.device Eeram.I2C-CONTROL-ADDRESS
+eeram-data-device := bus.device Eeram.I2C-DATA-ADDRESS
 
 // To use the device as a 'PersistentMap':
 pmap := PersistentMap
@@ -109,9 +179,17 @@ eeram := Eeram
 
 ```
 
+## Tests
+`tests/eeram-mock-test.toit` runs the driver against a simulated chip
+(`tests/mock-eeram.toit`).  No hardware is needed.  From the root of the
+package:
+```
+toit tests/eeram-mock-test.toit
+```
+
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
-[raise an issue](./issues). Feedback is
+[raise an issue](https://github.com/milkmansson/toit-eeram/issues). Feedback is
 welcome and appreciated!
 
 ## Disclaimer
