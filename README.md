@@ -39,7 +39,7 @@ manufacturers.
 ## Features/Operation
 
 ### Device Wiring
-The IC requries a power capacitor.  A decoupling capacitor is also recommended.
+The IC requires a power capacitor.  A decoupling capacitor is also recommended.
 There are no built-in pull up resistors either.  The datasheet shows that the
 device will function without a power capacitor, however if power is removed
 during a store operation, the data may become corrupt.  The datasheet gives
@@ -48,10 +48,18 @@ and values that are best to use.
 
 ### Auto Store Enable (ASE)
 > [!WARNING]
-> When the device is first turned used out of the box, 'Auto StoreEnable' (ASE)
+> When the device is first used out of the box, the 'Auto Store Enable' (ASE)
 > feature is disabled.  Until this is enabled the automatic save feature will
-> not happen.  This is enabled automatically in the `PersistentMap` class, but
-> not in the main `Eeram` driver.
+> not happen.  This is enabled automatically in the `PersistentMap` class (see
+> the caution below), but not in the main `Eeram` driver.
+
+> [!CAUTION]
+> Auto-Store needs a capacitor on the VCAP pin.  The datasheet states: "If a
+> capacitor is not connected to the VCAP pin, then the VCAP pin must be
+> connected to VCC and the Auto-Store feature must be disabled by writing the
+> ASE bit to a '0' to prevent data corruption in the EEPROM array when power
+> is lost."  On boards without the capacitor, construct `PersistentMap` with
+> `--no-auto-store` and call `disable-ase`.
 
 ASE can be configured using `driver.enable-ase` or using `driver.disable-ase`.
 The current setting can be determined using `driver.ase-enabled`.
@@ -65,15 +73,39 @@ The library comes in the form of two classes:
 ### Specific Functions
 | class | functions | description |
 | - | - | - |
-| `Eeram` | ...todo... | ...todo... |
-| `PersistentMap` | ...todo... | ...todo... |
+| `Eeram` | `read-data`, `write-data` | Read or write bytes at an address of the SRAM array.  Throws `OUT_OF_BOUNDS` instead of wrapping around at the end of the device. |
+| `Eeram` | `store`, `recall`, `has-changed` | Copy SRAM to EEPROM or back, and report whether the SRAM changed since the last store or recall.  `store` does nothing when there is no change. |
+| `Eeram` | `enable-ase`, `disable-ase`, `ase-enabled` | Control the Auto-Store feature. |
+| `Eeram` | `enable-block-protection`, `disable-block-protection`, `block-protection-enabled`, `block-protection-value` | Write-protect the upper part of the array. |
+| `Eeram` | `event-detected`, `clear-event` | Read and clear the flag set by the HS (Hardware Store) pin. |
+| `Eeram` | `dump-sram` | Print a hex-editor style dump, for troubleshooting. |
+| `PersistentMap` | `[]`, `[]=`, `get`, `contains`, `remove`, `clear` | Map access.  `[]=` saves to the SRAM immediately. |
+| `PersistentMap` | `keys`, `values`, `do`, `size`, `is-empty` | Map iteration and size. |
+| `PersistentMap` | `store`, `recall`, `has-changed`, `enable-ase`, `disable-ase`, `ase-enabled` | Same as the `Eeram` functions of that name. |
+| `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting, including the 4 bytes of overhead. |
+| `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. |
+
+### PersistentMap behaviour
+- The map is encoded with tison and saved with a 2 byte size and a CRC-16
+  (CCITT-FALSE) checksum.  Keys and values must be supported by tison.
+- At startup, stored data that fails the size, checksum or decoding checks is
+  discarded and logged as an error.  The map then starts empty.
+- `[]=` throws `PersistentMap capacity exceeded` when the encoded map no longer
+  fits on the device.  The map is left unchanged.
+- A value changed in place (for example a list that has an item added) is only
+  saved when it is assigned with `[]=` again.
 
 ## Example
-Please see the [examples](.\examples) folder.  In principle, the device has two
+Please see the [examples](examples/) folder.  In principle, the device has two
 I2C devices, the controller, and the memory device.  The controller receives
 instructions such as `store` and `recall` (pushing data between SRAM and EEPROM)
 and enabling ASE.  The usage pattern is thus:
 ```toit
+import gpio
+import i2c
+import eeram show Eeram
+import eeram.persistentmap show PersistentMap
+
 SDA-PIN := 8
 SCL-PIN := 9
 
@@ -92,8 +124,8 @@ if not scandevices.contains Eeram.I2C-DATA-ADDRESS:
   print "Eeram SRAM not present"
   return
 
-eeram-controller-device = bus.device Eeram.I2C-CONTROL-ADDRESS
-eeram-data-device = bus.device Eeram.I2C-DATA-ADDRESS
+eeram-controller-device := bus.device Eeram.I2C-CONTROL-ADDRESS
+eeram-data-device := bus.device Eeram.I2C-DATA-ADDRESS
 
 // To use the device as a 'PersistentMap':
 pmap := PersistentMap
@@ -111,7 +143,7 @@ eeram := Eeram
 
 ## Issues
 If there are any issues, changes, or any other kind of feedback, please
-[raise an issue](./issues). Feedback is
+[raise an issue](https://github.com/milkmansson/toit-eeram/issues). Feedback is
 welcome and appreciated!
 
 ## Disclaimer
