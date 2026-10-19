@@ -112,7 +112,6 @@ I2C devices, the controller, and the memory device.  The controller receives
 instructions such as `store` and `recall` (pushing data between SRAM and EEPROM)
 and enabling ASE.  The usage pattern is thus:
 ```toit
-import gpio
 import i2c
 import eeram show Eeram
 import eeram.persistentmap show PersistentMap
@@ -122,9 +121,7 @@ SCL-PIN := 9
 
 // Initial setup for I2C.
 frequency := 400_000
-sda := gpio.Pin SDA-PIN
-scl := gpio.Pin SCL-PIN
-bus := i2c.Bus --sda=sda --scl=scl --frequency=frequency
+bus := i2c.Bus --sda=SDA-PIN --scl=SCL-PIN --frequency=frequency
 scandevices := bus.scan
 
 // Establish control and data devices.

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a Zero-Clause BSD license that can
 // be found in the EXAMPLES_LICENSE file.
 
-import gpio
 import i2c
 import log
 import ..src.eeram show *
@@ -24,9 +23,7 @@ print-map map/PersistentMap -> none:
 main:
   // Initial setup for I2C.
   frequency := 100_000
-  sda := gpio.Pin SDA-PIN
-  scl := gpio.Pin SCL-PIN
-  bus := i2c.Bus --sda=sda --scl=scl --frequency=frequency
+  bus := i2c.Bus --sda=SDA-PIN --scl=SCL-PIN --frequency=frequency
   scandevices := bus.scan
 
   // Establish control and data devices.
