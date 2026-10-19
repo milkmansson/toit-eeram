@@ -92,10 +92,12 @@ The current setting can be determined using `driver.ase-enabled`.
 ### Library Classes
 The library comes in the form of three classes:
 * `Eeram` class:  The code implementing the Eeram features.
-* `PersistentMap` class:  Implements an Eeram-backed Map object (utilises the
-  above `Eeram` class.)
+* `PersistentMap` class (`import eeram.persistentmap`):  Implements an Eeram-
+  backed Toit `Map` object (utilises the `Eeram` class.)
 * `PersistentCounter` class (`import eeram.persistentcounter`):  A 32-bit
-  counter kept in the SRAM, with a complement for validation.
+  counter kept in the SRAM, with a complement for validation.  Like any SRAM
+  data, its value survives power loss only if the SRAM is stored to the EEPROM
+  (Auto-Store, or `store`).
 
 ### Specific Functions
 | class | functions | description | EEPROM wear |
@@ -114,8 +116,8 @@ The library comes in the form of three classes:
 | `PersistentMap` | `batch`, `flush`, `pending-flush`, `--no-auto-flush` | Defer SRAM writes and write the map once.  `store` flushes first. | None (fewer SRAM writes). |
 | `PersistentMap` | `load-state` | `LOAD-NEW`, `LOAD-OK` or `LOAD-CORRUPT`, from start-up or the last `recall`. | None. |
 | `PersistentMap` | `bytes-capacity`, `bytes-used`, `bytes-available` | Space accounting for the map region, including the 8 bytes of header. | None. |
-| `PersistentCounter` | `value`, `increment`, `set`, `reset`, `was-valid` | 32-bit counter, saved to the SRAM on each change. | None (SRAM only) until a store happens. |
 | `PersistentMap` | `dump-sram` | Dump of the occupied part of the SRAM. | None. |
+| `PersistentCounter` | `value`, `increment`, `set`, `reset`, `was-valid` | 32-bit counter, saved to the SRAM on each change. | None (SRAM only) until a store happens. |
 
 ### EEPROM wear
 - SRAM reads and writes do not wear the EEPROM: "Infinite read and write cycles
@@ -229,6 +231,8 @@ welcome and appreciated!
 ## Credits
 - [Florian](https://github.com/floitsch) for the tireless help and encouragement
 - The wider Toit developer team (past and present) for a truly excellent product
+- AI has been used to test/check code against registers/datasheets etc, and help
+  further develop the driver.
 
 ## About Toit
 One would assume you are here because you know what Toit is.  If you dont:
